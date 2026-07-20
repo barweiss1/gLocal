@@ -10,15 +10,26 @@
 
 set -euo pipefail
 
-# Submit from an activated virtual or Conda environment. PYTHON_BIN can also be
-# set explicitly: PYTHON_BIN=/path/to/env/bin/python sbatch collect_features.sh
-PYTHON_BIN="${PYTHON_BIN:-python}"
+# Submit from an activated Conda environment when possible. Otherwise, use the
+# python3 available on the compute node. PYTHON_BIN can be set explicitly:
+#   sbatch --export=ALL,PYTHON_BIN=/path/to/env/bin/python collect_features.sh
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  : # Keep the explicit interpreter.
+elif [[ -n "${CONDA_PREFIX:-}" ]]; then
+  PYTHON_BIN="$CONDA_PREFIX/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
 
 echo "Checking GPU..."
 nvidia-smi
 
 echo "Using Python..."
-command -v "$PYTHON_BIN"
+if ! command -v "$PYTHON_BIN"; then
+  echo "Python interpreter not found: $PYTHON_BIN" >&2
+  echo "Set PYTHON_BIN to the absolute path of the prepared environment." >&2
+  exit 1
+fi
 "$PYTHON_BIN" --version
 "$PYTHON_BIN" -c "import packaging, thingsvision; print('Dependencies: OK')"
 
