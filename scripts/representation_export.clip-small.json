@@ -1,0 +1,43 @@
+{
+  "features_root": "../features-export",
+  "device": "cuda",
+  "logical_batch_size": 1024,
+  "compute_batch_size": 32,
+  "num_workers": 2,
+  "allow_download": true,
+  "transforms": ["none", "glocal"],
+  "models": [
+    {
+      "name": "clip_RN50",
+      "source": "custom",
+      "layer": "visual",
+      "glocal_transform": "../transforms/clip_RN50/visual/transform.npz"
+    },
+    {
+      "name": "clip_ViT-L/14",
+      "slug": "clip_ViT-L-14",
+      "source": "custom",
+      "layer": "visual",
+      "glocal_transform": "../transforms/clip_ViT-L/14/visual/transform.npz"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion400m_e32",
+      "source": "custom",
+      "layer": "visual",
+      "glocal_transform": "../transforms/OpenCLIP_ViT-L-14_laion400m_e32/visual/transform.npz"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
+      "source": "custom",
+      "layer": "visual",
+      "glocal_transform": "../transforms/OpenCLIP_ViT-L-14_laion2b_s32b_b82k/visual/transform.npz"
+    }
+  ],
+  "datasets": [
+    {
+      "name": "cifar100",
+      "root": "../datasets",
+      "splits": ["test"]
+    }
+  ]
+}

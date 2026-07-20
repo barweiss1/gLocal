@@ -1,4 +1,6 @@
 .idea
+.venv/
+.vscode/
 resources
 *.txt
 *.npy

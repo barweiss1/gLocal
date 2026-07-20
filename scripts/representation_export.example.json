@@ -1,0 +1,121 @@
+{
+  "features_root": "../features-export",
+  "device": "cuda",
+  "logical_batch_size": 1024,
+  "compute_batch_size": 128,
+  "num_workers": 4,
+  "allow_download": false,
+  "models": [
+    {
+      "name": "alexnet",
+      "source": "torchvision",
+      "layer": "classifier.4",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/torchvision/alexnet/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/alexnet/classifier.4/transform.npz"
+    },
+    {
+      "name": "vgg16",
+      "source": "torchvision",
+      "layer": "classifier.3",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/torchvision/vgg16/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/vgg16/classifier.3/transform.npz"
+    },
+    {
+      "name": "resnet18",
+      "source": "torchvision",
+      "layer": "avgpool",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/torchvision/resnet18/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/resnet18/avgpool/transform.npz"
+    },
+    {
+      "name": "resnet50",
+      "source": "torchvision",
+      "layer": "avgpool",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/torchvision/resnet50/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/resnet50/avgpool/transform.npz"
+    },
+    {
+      "name": "clip_RN50",
+      "source": "custom",
+      "layer": "visual",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/custom/clip_RN50/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/clip_RN50/visual/transform.npz"
+    },
+    {
+      "name": "clip_ViT-L/14",
+      "slug": "clip_ViT-L-14",
+      "source": "custom",
+      "layer": "visual",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/custom/clip_ViT-L/14/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/clip_ViT-L/14/visual/transform.npz"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion400m_e32",
+      "source": "custom",
+      "layer": "visual",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/custom/OpenCLIP_ViT-L-14_laion400m_e32/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/OpenCLIP_ViT-L-14_laion400m_e32/visual/transform.npz"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
+      "source": "custom",
+      "layer": "visual",
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/custom/OpenCLIP_ViT-L-14_laion2b_s32b_b82k/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/OpenCLIP_ViT-L-14_laion2b_s32b_b82k/visual/transform.npz"
+    },
+    {
+      "name": "dino-vit-base-p8",
+      "source": "ssl",
+      "layer": "norm",
+      "extract_cls_token": true,
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/ssl/dino-vit-base-p8/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/dino-vit-base-p8/norm/transform.npz"
+    },
+    {
+      "name": "dino-vit-base-p16",
+      "source": "ssl",
+      "layer": "norm",
+      "extract_cls_token": true,
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/ssl/dino-vit-base-p16/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/dino-vit-base-p16/norm/transform.npz"
+    },
+    {
+      "name": "dinov2-vit-base-p14",
+      "source": "ssl",
+      "layer": "norm",
+      "extract_cls_token": true,
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/ssl/dinov2-vit-base-p14/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/dinov2-vit-base-p14/norm/transform.npz"
+    },
+    {
+      "name": "dinov2-vit-large-p14",
+      "source": "ssl",
+      "layer": "norm",
+      "extract_cls_token": true,
+      "global_transform": "${GLOBAL_TRANSFORMS_ROOT}/ssl/dinov2-vit-large-p14/penultimate/3/0.001/adam/0.001/transform.npz",
+      "glocal_transform": "../transforms/dinov2-vit-large-p14/norm/transform.npz"
+    }
+  ],
+  "datasets": [
+    {
+      "name": "cifar100",
+      "root": "${CIFAR100_ROOT}",
+      "splits": ["train", "test"]
+    },
+    {
+      "name": "dtd",
+      "root": "${DTD_ROOT}",
+      "splits": ["train", "val", "test"]
+    },
+    {
+      "name": "sun397",
+      "root": "${SUN397_ROOT}",
+      "splits": ["train", "test"]
+    },
+    {
+      "name": "imagenet",
+      "root": "${IMAGENET_ROOT}",
+      "splits": ["train", "val"]
+    }
+  ]
+}
