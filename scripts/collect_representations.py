@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Small wrapper for exporting aligned none/global/glocal representations."""
+"""Export aligned model representations in resumable NPZ batches.
+
+The wrapper extracts each model's raw features once per logical batch and writes
+the selected ``none``, ``global``, and ``glocal`` variants under
+``<features>/<model>/<dataset>/<transform>/``. Dataset catalogs keep sample order
+identical across models and variants.
+"""
 
 from __future__ import annotations
 
@@ -29,10 +35,11 @@ DATASET_SPLITS = {
 
 
 class ExportError(RuntimeError):
-    pass
+    """Raised when configuration or exported artifacts violate the contract."""
 
 
 def slug(value: str) -> str:
+    """Convert a model or dataset name into a filesystem-safe directory name."""
     result = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.")
     if not result:
         raise ExportError(f"Cannot create a filename from {value!r}")
@@ -40,6 +47,7 @@ def slug(value: str) -> str:
 
 
 def resolve_path(value: str, base: Path) -> Path:
+    """Expand a configured path and resolve relative paths from the config folder."""
     expanded = os.path.expanduser(os.path.expandvars(value))
     if "$" in expanded:
         raise ExportError(f"Unresolved environment variable in path: {value}")
@@ -53,6 +61,12 @@ def load_config(
     selected_datasets: Optional[Sequence[str]] = None,
     selected_transforms: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
+    """Load, default, filter, and resolve a representation-export configuration.
+
+    Command-line selections override the configured transform list and filter the
+    model and dataset lists. Transform paths are required only for selected
+    transformed variants, so a ``none``/``glocal`` run does not need globals.
+    """
     path = path.resolve()
     with path.open("r", encoding="utf-8") as handle:
         config = json.load(handle)
@@ -107,6 +121,7 @@ def load_config(
 
 
 def sha256(path: Path) -> str:
+    """Return the hexadecimal SHA-256 checksum of a file."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -115,6 +130,7 @@ def sha256(path: Path) -> str:
 
 
 def write_json(path: Path, value: Any) -> None:
+    """Atomically write a JSON-serializable value with stable formatting."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8") as handle:
@@ -124,6 +140,7 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def write_npz(path: Path, values: Mapping[str, Any]) -> None:
+    """Atomically write a compressed NPZ that is safe for ``allow_pickle=False``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp.npz")
     np.savez_compressed(temporary, **values)
@@ -131,15 +148,22 @@ def write_npz(path: Path, values: Mapping[str, Any]) -> None:
 
 
 def read_npz(path: Path) -> Dict[str, np.ndarray]:
+    """Load all arrays from an NPZ without enabling Python object deserialization."""
     with np.load(path, allow_pickle=False) as archive:
         return {key: np.asarray(archive[key]) for key in archive.files}
 
 
 def text(value: str) -> np.ndarray:
+    """Encode metadata text as a NumPy Unicode scalar instead of an object array."""
     return np.asarray(value, dtype=f"<U{max(1, len(value))}")
 
 
 def load_transform(path: Path) -> Dict[str, Any]:
+    """Load and validate a transform artifact and record its identity.
+
+    Artifacts must contain ``weights``, ``mean``, and ``std``; ``bias`` is
+    optional. The weight matrix must be square and standard deviations nonzero.
+    """
     if not path.is_file():
         raise ExportError(f"Missing transform: {path}")
     with np.load(path, allow_pickle=False) as archive:
@@ -167,6 +191,7 @@ def load_transform(path: Path) -> Dict[str, Any]:
 
 
 def apply_transform(features: np.ndarray, transform: Mapping[str, Any]) -> np.ndarray:
+    """Apply ``((features - mean) / std) @ weights + bias`` as float32."""
     if features.shape[1] != transform["weights"].shape[0]:
         raise ExportError(
             f"Feature dimension {features.shape[1]} does not match transform "
@@ -179,6 +204,7 @@ def apply_transform(features: np.ndarray, transform: Mapping[str, Any]) -> np.nd
 
 
 def make_dataset(spec: Mapping[str, Any], split: str, transform: Any) -> Any:
+    """Construct one supported torchvision dataset split in canonical order."""
     from torchvision.datasets import CIFAR100, DTD, ImageNet, SUN397
 
     root = str(spec["root"])
@@ -205,6 +231,7 @@ def make_dataset(spec: Mapping[str, Any], split: str, transform: Any) -> Any:
 
 
 def labels_for(dataset: Any) -> np.ndarray:
+    """Read class labels from the dataset interfaces used by torchvision."""
     if hasattr(dataset, "targets"):
         labels = dataset.targets
     elif hasattr(dataset, "_labels"):
@@ -215,6 +242,7 @@ def labels_for(dataset: Any) -> np.ndarray:
 
 
 def ids_for(dataset: Any, spec: Mapping[str, Any], split: str) -> np.ndarray:
+    """Build stable sample IDs from relative paths or deterministic indices."""
     paths = None
     if hasattr(dataset, "_image_files"):
         paths = dataset._image_files
@@ -234,12 +262,18 @@ def ids_for(dataset: Any, spec: Mapping[str, Any], split: str) -> np.ndarray:
 def catalog_path(
     config: Mapping[str, Any], dataset: Mapping[str, Any], split: str
 ) -> Path:
+    """Return the canonical sample-catalog path for a dataset split."""
     return config["features_root"] / "_index" / dataset["slug"] / f"{split}.npz"
 
 
 def ensure_catalog(
     config: Mapping[str, Any], dataset_spec: Mapping[str, Any], split: str
 ) -> Dict[str, np.ndarray]:
+    """Create or verify the sample IDs, labels, and indices for one split.
+
+    An existing catalog is never silently replaced: changed ordering or labels
+    raise :class:`ExportError` to prevent cross-model misalignment.
+    """
     dataset = make_dataset(dataset_spec, split, transform=None)
     values = {
         "sample_ids": ids_for(dataset, dataset_spec, split),
@@ -259,6 +293,7 @@ def ensure_catalog(
 
 
 def load_extractor(model: Mapping[str, Any], device: str) -> Any:
+    """Create the pretrained ThingsVision extractor described by a model spec."""
     from thingsvision import get_extractor
     from utils.probing.helpers import model_name_to_thingsvision
 
@@ -282,6 +317,11 @@ def extract_features(
     batch_size: int,
     cls_token: bool,
 ) -> Tuple[np.ndarray, int]:
+    """Extract one logical batch, reducing the inference microbatch on OOM.
+
+    Returns the concatenated float32 features in input order and the microbatch
+    size that succeeded. For token models, only the CLS token is retained.
+    """
     import torch
 
     current = min(batch_size, len(images))
@@ -316,16 +356,19 @@ def output_dir(
     dataset: Mapping[str, Any],
     transform: str,
 ) -> Path:
+    """Return the output directory for a model/dataset/transform combination."""
     return config["features_root"] / model["slug"] / dataset["slug"] / transform
 
 
 def batch_name(split: str, index: int) -> str:
+    """Format a zero-based logical batch filename."""
     return f"{split}-batch-{index:06d}.npz"
 
 
 def batch_is_valid(
     path: Path, ids: np.ndarray, transform: str, transform_sha256: str
 ) -> bool:
+    """Check whether a batch can be resumed for the expected samples and transform."""
     if not path.is_file():
         return False
     try:
@@ -340,6 +383,12 @@ def batch_is_valid(
 
 
 def extract(config: Mapping[str, Any]) -> None:
+    """Extract and export all selected model, dataset, and transform variants.
+
+    Raw model features are computed once per logical batch. Transformed variants
+    are derived from that same array, guaranteeing matching samples and ordering.
+    Existing batches with matching sample IDs and transform hashes are reused.
+    """
     import torch
 
     config["features_root"].mkdir(parents=True, exist_ok=True)
@@ -470,7 +519,7 @@ def extract(config: Mapping[str, Any]) -> None:
 
 
 def attach_performance(config: Mapping[str, Any], performance_path: Path) -> None:
-    """Attach a small user-produced AD/FS summary to every matching feature file."""
+    """Attach user-produced AD/FS summaries to batches and transform metadata."""
     with performance_path.open("r", encoding="utf-8") as handle:
         performance = json.load(handle)
     for model in config["models"]:
@@ -494,11 +543,13 @@ def attach_performance(config: Mapping[str, Any], performance_path: Path) -> Non
 
 
 def read_json(path: Path) -> Dict[str, Any]:
+    """Read a JSON object from disk."""
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def validate(config: Mapping[str, Any]) -> None:
+    """Validate completeness, alignment, dimensions, dtype, and finite values."""
     errors: List[str] = []
     for dataset in config["datasets"]:
         for split in dataset["splits"]:
@@ -544,6 +595,7 @@ def validate(config: Mapping[str, Any]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line stage and selection overrides."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument(
@@ -565,6 +617,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Run the requested stage and convert expected failures into exit status 1."""
     args = parse_args()
     try:
         config = load_config(args.config, args.models, args.datasets, args.transforms)

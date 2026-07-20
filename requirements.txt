@@ -6,6 +6,7 @@ isort
 matplotlib
 ml_collections
 numpy
+packaging
 pandas
 protobuf
 pyflakes
