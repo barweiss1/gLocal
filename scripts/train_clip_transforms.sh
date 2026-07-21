@@ -14,8 +14,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-: "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the directory containing triplets/}"
-: "${THINGS_FEATURES:?Set THINGS_FEATURES to the THINGS features.pkl file}"
+: "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the prepared THINGS directory}"
+THINGS_FEATURES="${THINGS_FEATURES:-$THINGS_DATA_ROOT/features.pkl}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   : # Keep the explicit interpreter.
@@ -36,6 +36,7 @@ for required in \
   "$THINGS_FEATURES"; do
   if [[ ! -f "$required" ]]; then
     echo "Required training input not found: $required" >&2
+    echo "Prepare it first with scripts/prepare_things_clip.py (see the runbook)." >&2
     exit 1
   fi
 done

@@ -53,12 +53,31 @@ global regularization, with at most four tasks running concurrently. Each task h
 an isolated result root and skips its output when `transform.npz` already exists.
 Both variants train from the same THINGS triplets and model features.
 
+First prepare THINGS once. The repository loader's `download=True` option only
+downloads the concept table; it does not download the images or triplets. The
+preparation wrapper downloads the official 90/10 behavioral splits and the 1,854
+image THINGSplus CC0 subset, then uses `THINGSBehavior` to extract all four CLIP
+feature matrices. It does not download the full 26,107-image THINGS archive.
+
+```bash
+conda activate glocal_env
+export THINGS_DATA_ROOT=/path/to/things-clip-training
+
+python scripts/prepare_things_clip.py \
+  --data-root "$THINGS_DATA_ROOT" \
+  --device cuda \
+  --batch-size 32
+```
+
+The CC0 archive is about 1.18 GB. If the expected 1,854 files are already present
+as `$THINGS_DATA_ROOT/images/<uniqueID>.jpg`, add `--use-existing-images` to skip
+that download. The preparation command resumes completed triplets, images, models,
+and `features.pkl` entries.
+
 ```bash
 conda activate glocal_env
 mkdir -p logs
 
-export THINGS_DATA_ROOT=/path/to/things
-export THINGS_FEATURES=/path/to/probing/embeddings/features.pkl
 export PROBING_BASE=/path/to/clip-transform-training
 
 TRAIN_JOB=$(sbatch --parsable \
@@ -66,9 +85,10 @@ TRAIN_JOB=$(sbatch --parsable \
   scripts/train_clip_transforms.sh)
 ```
 
-`THINGS_DATA_ROOT` must contain `triplets/train_90.npy` and
-`triplets/test_10.npy`. `THINGS_FEATURES` must contain entries for all four models
-under `features["custom"][model]["penultimate"]`.
+The training script defaults `THINGS_FEATURES` to
+`$THINGS_DATA_ROOT/features.pkl`. You can still set it explicitly when using an
+existing feature dictionary. It must contain all four models under
+`features["custom"][model]["penultimate"]`.
 
 ## Collect all CLIP representations
 
