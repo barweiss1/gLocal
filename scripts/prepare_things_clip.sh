@@ -29,6 +29,15 @@ cd "$REPO_ROOT"
 
 : "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the desired THINGS directory}"
 
+case "$THINGS_DATA_ROOT" in
+  /path/to/*|/path/to)
+    echo "THINGS_DATA_ROOT is still a documentation placeholder: $THINGS_DATA_ROOT" >&2
+    echo "Set it to a writable path, for example:" >&2
+    echo "  export THINGS_DATA_ROOT=/raid/home/barweiss/datasets/things-clip-training" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   : # Keep the explicitly supplied interpreter.
 elif [[ -n "${CONDA_PREFIX:-}" ]]; then
@@ -52,8 +61,14 @@ ARGS=(
   --batch-size "$PREP_BATCH_SIZE"
 )
 
-if [[ -n "${THINGS_FEATURES:-}" ]]; then
-  ARGS+=(--features "$THINGS_FEATURES")
+if [[ -n "${PREP_FEATURES_OUTPUT:-}" ]]; then
+  case "$PREP_FEATURES_OUTPUT" in
+    /path/to/*|/path/to)
+      echo "PREP_FEATURES_OUTPUT is still a placeholder: $PREP_FEATURES_OUTPUT" >&2
+      exit 1
+      ;;
+  esac
+  ARGS+=(--features "$PREP_FEATURES_OUTPUT")
 fi
 
 if [[ "${USE_EXISTING_THINGS_IMAGES:-0}" == "1" ]]; then

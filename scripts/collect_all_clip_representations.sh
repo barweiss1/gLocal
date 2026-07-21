@@ -40,6 +40,13 @@ if ! command -v "$PYTHON_BIN" >/dev/null; then
 fi
 
 PROBING_BASE="${PROBING_BASE:-$REPO_ROOT/clip-transform-training}"
+case "$PROBING_BASE" in
+  /path/to/*|/path/to)
+    echo "PROBING_BASE is still a placeholder: $PROBING_BASE" >&2
+    echo "Set it to the transform-training output directory." >&2
+    exit 1
+    ;;
+esac
 MODULE="${MODULE:-penultimate}"
 N_FOLDS="${N_FOLDS:-3}"
 LMBDA="${LMBDA:-0.001}"

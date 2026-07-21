@@ -29,6 +29,22 @@ REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 cd "$REPO_ROOT"
 
 : "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the prepared THINGS directory}"
+
+case "$THINGS_DATA_ROOT" in
+  /path/to/*|/path/to)
+    echo "THINGS_DATA_ROOT is still a documentation placeholder: $THINGS_DATA_ROOT" >&2
+    echo "Set it to the writable path used by the preparation job." >&2
+    exit 1
+    ;;
+esac
+
+case "${THINGS_FEATURES:-}" in
+  /path/to/*|/path/to)
+    echo "Ignoring placeholder THINGS_FEATURES: $THINGS_FEATURES" >&2
+    unset THINGS_FEATURES
+    ;;
+esac
+
 THINGS_FEATURES="${THINGS_FEATURES:-$THINGS_DATA_ROOT/features.pkl}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -84,6 +100,13 @@ KIND="${KINDS[$KIND_INDEX]}"
 REGULARIZATION="${REGULARIZATIONS[$KIND_INDEX]}"
 
 PROBING_BASE="${PROBING_BASE:-$REPO_ROOT/clip-transform-training}"
+case "$PROBING_BASE" in
+  /path/to/*|/path/to)
+    echo "PROBING_BASE is still a placeholder: $PROBING_BASE" >&2
+    echo "Set it to a writable output directory before submitting." >&2
+    exit 1
+    ;;
+esac
 MODULE="${MODULE:-penultimate}"
 N_FOLDS="${N_FOLDS:-3}"
 LMBDA="${LMBDA:-0.001}"
@@ -92,8 +115,14 @@ LEARNING_RATE="${LEARNING_RATE:-0.001}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
 EPOCHS="${EPOCHS:-100}"
 BURNIN="${BURNIN:-15}"
-PATIENCE="${PATIENCE:-10}"
+PATIENCE="${PATIENCE:-15}"
 SIGMA="${SIGMA:-0.001}"
+
+if (( PATIENCE < BURNIN )); then
+  echo "PATIENCE ($PATIENCE) must be at least BURNIN ($BURNIN)." >&2
+  echo "With Lightning 1.8, an earlier stop signal can repeatedly trigger validation while min_epochs blocks exit." >&2
+  exit 1
+fi
 
 OPTIM_LOWER="${OPTIM,,}"
 TASK_ROOT="$PROBING_BASE/$KIND/$MODEL_SLUG"

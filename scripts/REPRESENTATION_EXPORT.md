@@ -65,7 +65,7 @@ Submit preparation to a GPU worker:
 conda activate glocal_env
 mkdir -p logs
 
-export THINGS_DATA_ROOT=/path/to/things-clip-training
+export THINGS_DATA_ROOT=/raid/home/barweiss/datasets/things-clip-training
 
 PREP_JOB=$(sbatch --parsable \
   --export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python" \
@@ -86,7 +86,7 @@ and `features.pkl` entries.
 conda activate glocal_env
 mkdir -p logs
 
-export PROBING_BASE=/path/to/clip-transform-training
+export PROBING_BASE=/raid/home/barweiss/datasets/clip-transform-training
 
 TRAIN_JOB=$(sbatch --parsable \
   --dependency="afterok:$PREP_JOB" \
@@ -103,6 +103,17 @@ The training script defaults `THINGS_FEATURES` to
 `$THINGS_DATA_ROOT/features.pkl`. You can still set it explicitly when using an
 existing feature dictionary. It must contain all four models under
 `features["custom"][model]["penultimate"]`.
+
+Training uses `BURNIN=15` and `PATIENCE=15`. The wrapper rejects a patience value
+smaller than the burn-in because Lightning 1.8 can retain an early-stop signal
+while `min_epochs` prevents exit, causing validation to run repeatedly. The
+underlying repository checkpoint callback writes only every 20 epochs, so a run
+that stops around epoch 15 will normally produce no `.ckpt`; the final
+`transform.npz` is written after all cross-validation folds complete.
+
+The preparation job intentionally ignores `THINGS_FEATURES` inherited from the
+shell. To place its output somewhere other than `$THINGS_DATA_ROOT/features.pkl`,
+set `PREP_FEATURES_OUTPUT` explicitly.
 
 ## Collect all CLIP representations
 
