@@ -2,7 +2,7 @@
 """Export aligned model representations in resumable NPZ batches.
 
 The wrapper extracts each model's raw features once per logical batch and writes
-the selected ``none``, ``global``, and ``glocal`` variants under
+the selected ``none``, ``global``, ``glocal``, and ``naive`` variants under
 ``<features>/<model>/<dataset>/<transform>/``. Dataset catalogs keep sample order
 identical across models and variants.
 """
@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import re
 import sys
 from pathlib import Path
@@ -25,9 +26,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-TRANSFORMS = ("none", "global", "glocal")
+TRANSFORMS = ("none", "global", "glocal", "naive")
 DATASET_SPLITS = {
+    "cifar10": ("train", "test"),
     "cifar100": ("train", "test"),
+    "cifar100-coarse": ("train", "test"),
     "dtd": ("train", "val", "test"),
     "sun397": ("train", "test"),
     "imagenet": ("train", "val"),
@@ -98,6 +101,15 @@ def load_config(
             if key not in model:
                 raise ExportError(f"{model['name']} is missing {key}")
             model[key] = resolve_path(model[key], path.parent)
+            if kind == "naive" and model[key].suffix.lower() in {".pkl", ".pickle"}:
+                stats_key = "naive_stats_transform"
+                stats_path = model.get(stats_key, model.get("glocal_transform"))
+                if stats_path is None:
+                    raise ExportError(
+                        f"{model['name']} needs naive_stats_transform or "
+                        "glocal_transform for THINGS normalization"
+                    )
+                model[stats_key] = resolve_path(stats_path, path.parent)
         models.append(model)
     datasets = []
     for item in config["datasets"]:
@@ -190,6 +202,72 @@ def load_transform(path: Path) -> Dict[str, Any]:
     return result
 
 
+def load_naive_transform(
+    path: Path, model: Mapping[str, Any], stats_path: Path
+) -> Dict[str, Any]:
+    """Load one model matrix from the repository's nested naive-transform pickle.
+
+    Naive artifacts do not store normalization statistics. The supplied gLocal
+    stats artifact provides the THINGS mean/std used by the repository before
+    applying naive matrices.
+    """
+    if not path.is_file():
+        raise ExportError(f"Missing naive transform: {path}")
+    with path.open("rb") as handle:
+        transforms = pickle.load(handle)
+    key_layer = model.get("naive_key_layer", model["layer"])
+    try:
+        value = transforms[model["source"]][model["name"]][key_layer]
+    except (KeyError, TypeError) as exc:
+        raise ExportError(
+            f"Naive transform has no entry for "
+            f"{model['source']}/{model['name']}/{key_layer}: {path}"
+        ) from exc
+
+    stats = load_transform(stats_path)
+    if isinstance(value, Mapping) and "weights" in value:
+        weights = np.asarray(value["weights"], dtype=np.float32)
+        bias = np.asarray(value["bias"], dtype=np.float32) if "bias" in value else None
+    else:
+        matrix = np.asarray(value, dtype=np.float32)
+        if matrix.ndim != 2:
+            raise ExportError(f"Naive transform is not a matrix: {path}")
+        if matrix.shape[1] == matrix.shape[0] + 1:
+            weights, bias = matrix[:, :-1], matrix[:, -1]
+        elif matrix.shape[0] == matrix.shape[1]:
+            weights, bias = matrix, None
+        else:
+            raise ExportError(
+                f"Unexpected naive transform shape {matrix.shape}: {path}"
+            )
+    if weights.shape != stats["weights"].shape:
+        raise ExportError(
+            f"Naive dimension {weights.shape} does not match model dimension "
+            f"{stats['weights'].shape} for {model['name']}"
+        )
+    identity = hashlib.sha256(
+        f"{sha256(path)}:{stats['sha256']}:{model['source']}:"
+        f"{model['name']}:{key_layer}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "weights": weights,
+        "bias": bias,
+        "mean": stats["mean"],
+        "std": stats["std"],
+        "path": path,
+        "stats_path": stats_path,
+        "sha256": identity,
+    }
+
+
+def load_model_transform(model: Mapping[str, Any], kind: str) -> Dict[str, Any]:
+    """Load an NPZ transform or the model entry from a naive pickle artifact."""
+    path = model[f"{kind}_transform"]
+    if kind == "naive" and path.suffix.lower() in {".pkl", ".pickle"}:
+        return load_naive_transform(path, model, model["naive_stats_transform"])
+    return load_transform(path)
+
+
 def apply_transform(features: np.ndarray, transform: Mapping[str, Any]) -> np.ndarray:
     """Apply ``((features - mean) / std) @ weights + bias`` as float32."""
     if features.shape[1] != transform["weights"].shape[0]:
@@ -205,12 +283,22 @@ def apply_transform(features: np.ndarray, transform: Mapping[str, Any]) -> np.nd
 
 def make_dataset(spec: Mapping[str, Any], split: str, transform: Any) -> Any:
     """Construct one supported torchvision dataset split in canonical order."""
-    from torchvision.datasets import CIFAR100, DTD, ImageNet, SUN397
+    from torchvision.datasets import CIFAR10, CIFAR100, DTD, ImageNet, SUN397
+
+    from data.cifar import CIFAR100Coarse
 
     root = str(spec["root"])
     download = bool(spec["allow_download"])
+    if spec["name"] == "cifar10":
+        return CIFAR10(
+            root=root, train=split == "train", transform=transform, download=download
+        )
     if spec["name"] == "cifar100":
         return CIFAR100(
+            root=root, train=split == "train", transform=transform, download=download
+        )
+    if spec["name"] == "cifar100-coarse":
+        return CIFAR100Coarse(
             root=root, train=split == "train", transform=transform, download=download
         )
     if spec["name"] == "dtd":
@@ -394,13 +482,13 @@ def extract(config: Mapping[str, Any]) -> None:
     config["features_root"].mkdir(parents=True, exist_ok=True)
     for model in config["models"]:
         transforms = {
-            kind: load_transform(model[f"{kind}_transform"])
+            kind: load_model_transform(model, kind)
             for kind in config["transforms"]
             if kind != "none"
         }
         dimensions = {value["weights"].shape for value in transforms.values()}
         if len(dimensions) > 1:
-            raise ExportError(f"Global/glocal dimensions differ for {model['name']}")
+            raise ExportError(f"Transform dimensions differ for {model['name']}")
         extractor = load_extractor(model, config["device"])
         preprocessing = extractor.get_transformations()
         for dataset_spec in config["datasets"]:
@@ -507,6 +595,11 @@ def extract(config: Mapping[str, Any]) -> None:
                         "transform": kind,
                         "transform_path": (
                             None if transform is None else str(transform["path"])
+                        ),
+                        "transform_stats_path": (
+                            None
+                            if transform is None or "stats_path" not in transform
+                            else str(transform["stats_path"])
                         ),
                         "transform_sha256": (
                             "none" if transform is None else transform["sha256"]

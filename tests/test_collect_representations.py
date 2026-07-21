@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,6 +42,46 @@ class CollectRepresentationsTests(unittest.TestCase):
         )
         self.assertEqual(batch_size, 2)
         np.testing.assert_array_equal(extracted, images.numpy() * 2)
+
+    def test_naive_transform_uses_glocal_normalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stats_path = root / "glocal.npz"
+            np.savez_compressed(
+                stats_path,
+                weights=np.eye(2, dtype=np.float32),
+                mean=np.asarray(1, dtype=np.float32),
+                std=np.asarray(2, dtype=np.float32),
+            )
+            naive_path = root / "naive.pkl"
+            with naive_path.open("wb") as handle:
+                pickle.dump(
+                    {"custom": {"clip": {"visual": np.eye(2, dtype=np.float32)}}},
+                    handle,
+                )
+            transform = collect.load_naive_transform(
+                naive_path,
+                {"source": "custom", "name": "clip", "layer": "visual"},
+                stats_path,
+            )
+            np.testing.assert_allclose(
+                collect.apply_transform(
+                    np.asarray([[1, 3]], dtype=np.float32), transform
+                ),
+                [[0, 1]],
+            )
+
+    def test_naive_transform_accepts_trained_npz(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "naive.npz"
+            np.savez_compressed(
+                path,
+                weights=np.eye(2, dtype=np.float32),
+                mean=np.asarray(0, dtype=np.float32),
+                std=np.asarray(1, dtype=np.float32),
+            )
+            transform = collect.load_model_transform({"naive_transform": path}, "naive")
+            np.testing.assert_array_equal(transform["weights"], np.eye(2))
 
     def test_attach_and_validate(self):
         with tempfile.TemporaryDirectory() as directory:

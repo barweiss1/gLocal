@@ -20,6 +20,7 @@ elif [[ -n "${CONDA_PREFIX:-}" ]]; then
 else
   PYTHON_BIN="python3"
 fi
+CONFIG_PATH="${CONFIG_PATH:-scripts/representation_export.clip-small.json}"
 
 echo "Checking GPU..."
 nvidia-smi
@@ -32,6 +33,8 @@ if ! command -v "$PYTHON_BIN"; then
 fi
 "$PYTHON_BIN" --version
 "$PYTHON_BIN" -c "import packaging, thingsvision; print('Dependencies: OK')"
+echo "Config: $CONFIG_PATH"
 
 "$PYTHON_BIN" scripts/collect_representations.py \
-  --config scripts/representation_export.clip-small.json
+  --config "$CONFIG_PATH" \
+  "$@"
