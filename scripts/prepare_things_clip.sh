@@ -10,7 +10,21 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -n "${GLOCAL_REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$GLOCAL_REPO_ROOT"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="$SLURM_SUBMIT_DIR"
+else
+  REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+
+if [[ ! -f "$REPO_ROOT/scripts/prepare_things_clip.py" ]]; then
+  echo "gLocal repository not found at: $REPO_ROOT" >&2
+  echo "Submit from the repository root or set GLOCAL_REPO_ROOT explicitly." >&2
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 cd "$REPO_ROOT"
 
 : "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the desired THINGS directory}"

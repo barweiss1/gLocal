@@ -72,6 +72,11 @@ PREP_JOB=$(sbatch --parsable \
   scripts/prepare_things_clip.sh)
 ```
 
+Run `sbatch` from the gLocal repository root. SLURM executes a spool copy of the
+shell script, so the wrappers use `SLURM_SUBMIT_DIR` to return to the repository.
+If submitting from another directory, include
+`GLOCAL_REPO_ROOT=/absolute/path/to/gLocal` in `--export`.
+
 The CC0 archive is about 1.18 GB. If the expected 1,854 files are already present
 as `$THINGS_DATA_ROOT/images/<uniqueID>.jpg`, add `--use-existing-images` to skip
 that download. The preparation command resumes completed triplets, images, models,
