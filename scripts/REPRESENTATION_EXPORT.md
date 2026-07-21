@@ -59,14 +59,17 @@ preparation wrapper downloads the official 90/10 behavioral splits and the 1,854
 image THINGSplus CC0 subset, then uses `THINGSBehavior` to extract all four CLIP
 feature matrices. It does not download the full 26,107-image THINGS archive.
 
+Submit preparation to a GPU worker:
+
 ```bash
 conda activate glocal_env
+mkdir -p logs
+
 export THINGS_DATA_ROOT=/path/to/things-clip-training
 
-python scripts/prepare_things_clip.py \
-  --data-root "$THINGS_DATA_ROOT" \
-  --device cuda \
-  --batch-size 32
+PREP_JOB=$(sbatch --parsable \
+  --export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python" \
+  scripts/prepare_things_clip.sh)
 ```
 
 The CC0 archive is about 1.18 GB. If the expected 1,854 files are already present
@@ -81,9 +84,15 @@ mkdir -p logs
 export PROBING_BASE=/path/to/clip-transform-training
 
 TRAIN_JOB=$(sbatch --parsable \
+  --dependency="afterok:$PREP_JOB" \
   --export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python" \
   scripts/train_clip_transforms.sh)
 ```
+
+This dependency launches transform training only after THINGS preparation has
+completed successfully. To run preparation without downloading images that are
+already installed, submit with
+`--export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python,USE_EXISTING_THINGS_IMAGES=1"`.
 
 The training script defaults `THINGS_FEATURES` to
 `$THINGS_DATA_ROOT/features.pkl`. You can still set it explicitly when using an
