@@ -47,39 +47,31 @@ case "$PROBING_BASE" in
     exit 1
     ;;
 esac
-MODULE="${MODULE:-penultimate}"
-N_FOLDS="${N_FOLDS:-3}"
-LMBDA="${LMBDA:-0.001}"
-OPTIM="${OPTIM:-Adam}"
-LEARNING_RATE="${LEARNING_RATE:-0.001}"
-OPTIM_LOWER="${OPTIM,,}"
-
 transform_path() {
   local kind="$1"
   local slug="$2"
-  local model="$3"
-  echo "$PROBING_BASE/$kind/$slug/results/custom/$model/$MODULE/$N_FOLDS/$LMBDA/$OPTIM_LOWER/$LEARNING_RATE/transform.npz"
+  echo "$PROBING_BASE/selected/$kind/$slug/transform.npz"
 }
 
 export CLIP_RN50_NAIVE_TRANSFORM
-CLIP_RN50_NAIVE_TRANSFORM="$(transform_path naive clip_RN50 clip_RN50)"
+CLIP_RN50_NAIVE_TRANSFORM="$(transform_path naive clip_RN50)"
 export CLIP_RN50_GLOBAL_TRANSFORM
-CLIP_RN50_GLOBAL_TRANSFORM="$(transform_path global clip_RN50 clip_RN50)"
+CLIP_RN50_GLOBAL_TRANSFORM="$(transform_path global clip_RN50)"
 
 export CLIP_VIT_L14_NAIVE_TRANSFORM
-CLIP_VIT_L14_NAIVE_TRANSFORM="$(transform_path naive clip_ViT-L-14 'clip_ViT-L/14')"
+CLIP_VIT_L14_NAIVE_TRANSFORM="$(transform_path naive clip_ViT-L-14)"
 export CLIP_VIT_L14_GLOBAL_TRANSFORM
-CLIP_VIT_L14_GLOBAL_TRANSFORM="$(transform_path global clip_ViT-L-14 'clip_ViT-L/14')"
+CLIP_VIT_L14_GLOBAL_TRANSFORM="$(transform_path global clip_ViT-L-14)"
 
 export OPENCLIP_LAION400M_NAIVE_TRANSFORM
-OPENCLIP_LAION400M_NAIVE_TRANSFORM="$(transform_path naive OpenCLIP_ViT-L-14_laion400m_e32 OpenCLIP_ViT-L-14_laion400m_e32)"
+OPENCLIP_LAION400M_NAIVE_TRANSFORM="$(transform_path naive OpenCLIP_ViT-L-14_laion400m_e32)"
 export OPENCLIP_LAION400M_GLOBAL_TRANSFORM
-OPENCLIP_LAION400M_GLOBAL_TRANSFORM="$(transform_path global OpenCLIP_ViT-L-14_laion400m_e32 OpenCLIP_ViT-L-14_laion400m_e32)"
+OPENCLIP_LAION400M_GLOBAL_TRANSFORM="$(transform_path global OpenCLIP_ViT-L-14_laion400m_e32)"
 
 export OPENCLIP_LAION2B_NAIVE_TRANSFORM
-OPENCLIP_LAION2B_NAIVE_TRANSFORM="$(transform_path naive OpenCLIP_ViT-L-14_laion2b_s32b_b82k OpenCLIP_ViT-L-14_laion2b_s32b_b82k)"
+OPENCLIP_LAION2B_NAIVE_TRANSFORM="$(transform_path naive OpenCLIP_ViT-L-14_laion2b_s32b_b82k)"
 export OPENCLIP_LAION2B_GLOBAL_TRANSFORM
-OPENCLIP_LAION2B_GLOBAL_TRANSFORM="$(transform_path global OpenCLIP_ViT-L-14_laion2b_s32b_b82k OpenCLIP_ViT-L-14_laion2b_s32b_b82k)"
+OPENCLIP_LAION2B_GLOBAL_TRANSFORM="$(transform_path global OpenCLIP_ViT-L-14_laion2b_s32b_b82k)"
 
 TRANSFORM_PATHS=(
   "$CLIP_RN50_NAIVE_TRANSFORM"
@@ -98,6 +90,9 @@ for path in "${TRANSFORM_PATHS[@]}"; do
     exit 1
   fi
 done
+
+"$PYTHON_BIN" scripts/clip_transform_sweep.py validate-selected \
+  --probing-base "$PROBING_BASE"
 
 CONFIG_PATH="${CONFIG_PATH:-scripts/representation_export.clip-cifar.json}"
 echo "Collecting with config: $CONFIG_PATH"

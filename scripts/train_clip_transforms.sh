@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --array=0-7%4
+#SBATCH --array=0-31%4
 #SBATCH --time=2-00:00:00
 
 set -euo pipefail
@@ -19,7 +19,7 @@ else
   REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
-if [[ ! -f "$REPO_ROOT/main_global_probing.py" ]]; then
+if [[ ! -f "$REPO_ROOT/scripts/clip_transform_sweep.py" ]]; then
   echo "gLocal repository not found at: $REPO_ROOT" >&2
   echo "Submit from the repository root or set GLOCAL_REPO_ROOT explicitly." >&2
   exit 1
@@ -71,33 +71,11 @@ for required in \
   fi
 done
 
-MODELS=(
-  "clip_RN50"
-  "clip_ViT-L/14"
-  "OpenCLIP_ViT-L-14_laion400m_e32"
-  "OpenCLIP_ViT-L-14_laion2b_s32b_b82k"
-)
-SLUGS=(
-  "clip_RN50"
-  "clip_ViT-L-14"
-  "OpenCLIP_ViT-L-14_laion400m_e32"
-  "OpenCLIP_ViT-L-14_laion2b_s32b_b82k"
-)
-KINDS=("naive" "global")
-REGULARIZATIONS=("l2" "eye")
-
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
-if (( TASK_ID < 0 || TASK_ID >= 8 )); then
-  echo "Expected SLURM_ARRAY_TASK_ID in [0, 7], got $TASK_ID" >&2
+if (( TASK_ID < 0 || TASK_ID >= 32 )); then
+  echo "Expected SLURM_ARRAY_TASK_ID in [0, 31], got $TASK_ID" >&2
   exit 1
 fi
-
-MODEL_INDEX=$((TASK_ID % 4))
-KIND_INDEX=$((TASK_ID / 4))
-MODEL="${MODELS[$MODEL_INDEX]}"
-MODEL_SLUG="${SLUGS[$MODEL_INDEX]}"
-KIND="${KINDS[$KIND_INDEX]}"
-REGULARIZATION="${REGULARIZATIONS[$KIND_INDEX]}"
 
 PROBING_BASE="${PROBING_BASE:-$REPO_ROOT/clip-transform-training}"
 case "$PROBING_BASE" in
@@ -107,66 +85,24 @@ case "$PROBING_BASE" in
     exit 1
     ;;
 esac
-MODULE="${MODULE:-penultimate}"
-N_FOLDS="${N_FOLDS:-3}"
-LMBDA="${LMBDA:-0.001}"
-OPTIM="${OPTIM:-Adam}"
-LEARNING_RATE="${LEARNING_RATE:-0.001}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
 EPOCHS="${EPOCHS:-100}"
 BURNIN="${BURNIN:-15}"
-PATIENCE="${PATIENCE:-15}"
+PATIENCE="${PATIENCE:-10}"
 SIGMA="${SIGMA:-0.001}"
 
-if (( PATIENCE < BURNIN )); then
-  echo "PATIENCE ($PATIENCE) must be at least BURNIN ($BURNIN)." >&2
-  echo "With Lightning 1.8, an earlier stop signal can repeatedly trigger validation while min_epochs blocks exit." >&2
-  exit 1
-fi
+SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
 
-OPTIM_LOWER="${OPTIM,,}"
-TASK_ROOT="$PROBING_BASE/$KIND/$MODEL_SLUG"
-FEATURE_DIR="$TASK_ROOT/embeddings"
-FEATURE_PATH="$FEATURE_DIR/features.pkl"
-OUTPUT_PATH="$TASK_ROOT/results/custom/$MODEL/$MODULE/$N_FOLDS/$LMBDA/$OPTIM_LOWER/$LEARNING_RATE/transform.npz"
-
-if [[ -f "$OUTPUT_PATH" ]]; then
-  echo "Transform already exists; skipping: $OUTPUT_PATH"
-  exit 0
-fi
-
-mkdir -p "$FEATURE_DIR" "$TASK_ROOT/checkpoints"
-if [[ ! -e "$FEATURE_PATH" ]]; then
-  ln -s "$THINGS_FEATURES" "$FEATURE_PATH"
-fi
-
-echo "Training $KIND transform"
-echo "Model: $MODEL"
-echo "Regularization: $REGULARIZATION"
-echo "Output: $OUTPUT_PATH"
-
-"$PYTHON_BIN" main_global_probing.py \
-  --data_root "$THINGS_DATA_ROOT" \
-  --probing_root "$TASK_ROOT" \
-  --log_dir "$TASK_ROOT/checkpoints" \
-  --model "$MODEL" \
-  --source custom \
-  --module "$MODULE" \
-  --n_folds "$N_FOLDS" \
-  --optim "$OPTIM" \
-  --learning_rate "$LEARNING_RATE" \
-  --regularization "$REGULARIZATION" \
-  --lmbda "$LMBDA" \
-  --sigma "$SIGMA" \
-  --batch_size "$BATCH_SIZE" \
+"$PYTHON_BIN" scripts/clip_transform_sweep.py run \
+  --task-id "$TASK_ID" \
+  --repo-root "$REPO_ROOT" \
+  --data-root "$THINGS_DATA_ROOT" \
+  --features "$THINGS_FEATURES" \
+  --probing-base "$PROBING_BASE" \
+  --scratch-root "$SCRATCH_ROOT" \
+  --device gpu \
+  --batch-size "$BATCH_SIZE" \
   --epochs "$EPOCHS" \
   --burnin "$BURNIN" \
   --patience "$PATIENCE" \
-  --device gpu \
-  --use_bias
-
-if [[ ! -f "$OUTPUT_PATH" ]]; then
-  echo "Training completed without producing the expected transform: $OUTPUT_PATH" >&2
-  exit 1
-fi
-echo "Created: $OUTPUT_PATH"
+  --sigma "$SIGMA"
