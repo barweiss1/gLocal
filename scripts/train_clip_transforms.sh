@@ -88,8 +88,14 @@ esac
 BATCH_SIZE="${BATCH_SIZE:-256}"
 EPOCHS="${EPOCHS:-100}"
 BURNIN="${BURNIN:-15}"
-PATIENCE="${PATIENCE:-10}"
+PATIENCE="${PATIENCE:-15}"
 SIGMA="${SIGMA:-0.001}"
+
+if (( PATIENCE < BURNIN )); then
+  echo "PATIENCE ($PATIENCE) must be greater than or equal to BURNIN ($BURNIN)." >&2
+  echo "Lightning 1.8 can repeat validation indefinitely if early stopping is signaled before min_epochs." >&2
+  exit 1
+fi
 
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
 

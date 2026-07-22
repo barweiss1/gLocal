@@ -77,6 +77,16 @@ def task_spec(task_id: int) -> TaskSpec:
     )
 
 
+def validate_stop_policy(burnin: int, patience: int) -> None:
+    """Reject settings that can trap Lightning 1.8 in repeated validation."""
+    if patience < burnin:
+        raise SweepError(
+            f"patience ({patience}) must be greater than or equal to burn-in "
+            f"({burnin}); Lightning 1.8 can repeat validation indefinitely if "
+            "early stopping is signaled before min_epochs"
+        )
+
+
 def param_dir(probing_base: Path, spec: TaskSpec) -> Path:
     return probing_base / "selected" / spec.kind / spec.model_slug / "param_sweep"
 
@@ -253,7 +263,61 @@ def read_upstream_result(path: Path, spec: TaskSpec) -> Dict[str, float]:
     }
 
 
+def build_probing_command(
+    repo_root: Path,
+    data_root: Path,
+    probing_root: Path,
+    log_dir: Path,
+    spec: TaskSpec,
+    args: argparse.Namespace,
+) -> List[str]:
+    """Build the published probing command for one validated sweep task."""
+    return [
+        sys.executable,
+        str(repo_root / "scripts" / "run_global_probing_compat.py"),
+        "--repo-root",
+        str(repo_root),
+        "--data_root",
+        str(data_root),
+        "--probing_root",
+        str(probing_root),
+        "--log_dir",
+        str(log_dir),
+        "--model",
+        spec.model,
+        "--source",
+        "custom",
+        "--module",
+        "penultimate",
+        "--n_folds",
+        str(N_FOLDS),
+        "--optim",
+        OPTIMIZER,
+        "--learning_rate",
+        LEARNING_RATE,
+        "--regularization",
+        spec.regularization,
+        "--lmbda",
+        spec.lambda_label,
+        "--sigma",
+        args.sigma,
+        "--batch_size",
+        str(args.batch_size),
+        "--epochs",
+        str(args.epochs),
+        "--burnin",
+        str(args.burnin),
+        "--patience",
+        str(args.patience),
+        "--rnd_seed",
+        str(SEED),
+        "--device",
+        args.device,
+    ]
+
+
 def run_task(args: argparse.Namespace) -> int:
+    validate_stop_policy(args.burnin, args.patience)
     spec = task_spec(args.task_id)
     repo_root = args.repo_root.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve()
@@ -289,48 +353,14 @@ def run_task(args: argparse.Namespace) -> int:
         embeddings.mkdir(parents=True)
         (embeddings / "features.pkl").symlink_to(features)
         log_dir = temporary / "checkpoints"
-        command = [
-            sys.executable,
-            str(repo_root / "scripts" / "run_global_probing_compat.py"),
-            "--repo-root",
-            str(repo_root),
-            "--data_root",
-            str(data_root),
-            "--probing_root",
-            str(probing_root),
-            "--log_dir",
-            str(log_dir),
-            "--model",
-            spec.model,
-            "--source",
-            "custom",
-            "--module",
-            "penultimate",
-            "--n_folds",
-            str(N_FOLDS),
-            "--optim",
-            OPTIMIZER,
-            "--learning_rate",
-            LEARNING_RATE,
-            "--regularization",
-            spec.regularization,
-            "--lmbda",
-            spec.lambda_label,
-            "--sigma",
-            args.sigma,
-            "--batch_size",
-            str(args.batch_size),
-            "--epochs",
-            str(args.epochs),
-            "--burnin",
-            str(args.burnin),
-            "--patience",
-            str(args.patience),
-            "--rnd_seed",
-            str(SEED),
-            "--device",
-            args.device,
-        ]
+        command = build_probing_command(
+            repo_root,
+            data_root,
+            probing_root,
+            log_dir,
+            spec,
+            args,
+        )
         print(json.dumps({"task": asdict(spec), "command": command}, indent=2), flush=True)
         subprocess.run(command, cwd=repo_root, check=True)
 
@@ -498,7 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--batch-size", type=int, default=256)
     run_parser.add_argument("--epochs", type=int, default=100)
     run_parser.add_argument("--burnin", type=int, default=15)
-    run_parser.add_argument("--patience", type=int, default=10)
+    run_parser.add_argument("--patience", type=int, default=15)
     run_parser.add_argument("--sigma", default="0.001")
 
     select_parser = subparsers.add_parser("select", help="select the best lambda")

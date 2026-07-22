@@ -94,6 +94,25 @@ The training script defaults `THINGS_FEATURES` to `$THINGS_DATA_ROOT/features.pk
 You can set it explicitly when using an existing feature dictionary. It must
 contain all four models under `features["custom"][model]["penultimate"]`.
 
+Training defaults to `BURNIN=15` and `PATIENCE=15`, and the wrappers require
+patience to be greater than or equal to burn-in. In Lightning 1.8, an
+EarlyStopping callback can set `trainer.should_stop` before `min_epochs` has been
+met. The epoch loop then forces another validation because stopping was requested,
+but it cannot exit because of `min_epochs`, causing validation to repeat without
+advancing the epoch. Preventing an early-stop signal before burn-in avoids that
+loop while leaving the published probing source unchanged.
+
+If an older sweep submission is looping, cancel its affected array tasks and
+resubmit the array. For example:
+
+```bash
+scancel <array-job-id_or_array-task-id>
+```
+
+Valid lambda artifacts that finished earlier are detected and skipped. Looping
+tasks used temporary storage and did not publish a canonical artifact, so they
+restart cleanly. Older Adam/lambda `0.001` outputs are also left untouched.
+
 For a one-configuration pilot, submit array task 0 (CLIP-RN50, naive, lambda
 `0.01`) and check that the log prints three fresh-Trainer messages:
 

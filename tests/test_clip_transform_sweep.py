@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,45 @@ from scripts.run_global_probing_compat import fold_isolated_trainer
 
 
 class ClipTransformSweepTests(unittest.TestCase):
+    def test_stop_policy_accepts_equal_values_and_rejects_early_patience(self) -> None:
+        sweep.validate_stop_policy(burnin=15, patience=15)
+        with self.assertRaisesRegex(sweep.SweepError, r"patience \(10\).+burn-in \(15\)"):
+            sweep.validate_stop_policy(burnin=15, patience=10)
+
+        # The guard is the first operation in run_task, before input paths are read.
+        with self.assertRaisesRegex(sweep.SweepError, "repeat validation indefinitely"):
+            sweep.run_task(argparse.Namespace(burnin=15, patience=10))
+
+    def test_probing_command_uses_safe_stop_defaults(self) -> None:
+        parser = sweep.build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "--task-id",
+                "0",
+                "--repo-root",
+                "/repo",
+                "--data-root",
+                "/data",
+                "--features",
+                "/data/features.pkl",
+                "--probing-base",
+                "/output",
+            ]
+        )
+        self.assertEqual(args.burnin, 15)
+        self.assertEqual(args.patience, 15)
+        command = sweep.build_probing_command(
+            Path("/repo"),
+            Path("/data"),
+            Path("/scratch/probing"),
+            Path("/scratch/checkpoints"),
+            sweep.task_spec(0),
+            args,
+        )
+        self.assertEqual(command[command.index("--burnin") + 1], "15")
+        self.assertEqual(command[command.index("--patience") + 1], "15")
+
     def test_task_mapping_covers_cartesian_product_once(self) -> None:
         specs = [sweep.task_spec(index) for index in range(32)]
         combinations = {
