@@ -417,6 +417,14 @@ def validate_candidates(probing_base: Path) -> Dict[tuple[str, str], List[Dict[s
     return grouped
 
 
+def validate_sweep(probing_base: Path) -> int:
+    """Validate all 32 per-lambda artifacts without selecting a winner."""
+    grouped = validate_candidates(probing_base.expanduser().resolve())
+    candidate_count = sum(len(candidates) for candidates in grouped.values())
+    print(f"Validated all {candidate_count} naive/global parameter-sweep transforms.")
+    return 0
+
+
 def select_transforms(probing_base: Path) -> int:
     probing_base = probing_base.expanduser().resolve()
     grouped = validate_candidates(probing_base)
@@ -534,6 +542,11 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser = subparsers.add_parser("select", help="select the best lambda")
     select_parser.add_argument("--probing-base", type=Path, required=True)
 
+    sweep_parser = subparsers.add_parser(
+        "validate-sweep", help="validate all 32 per-lambda transforms"
+    )
+    sweep_parser.add_argument("--probing-base", type=Path, required=True)
+
     validate_parser = subparsers.add_parser(
         "validate-selected", help="validate the eight selected transforms"
     )
@@ -548,6 +561,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return run_task(args)
         if args.command == "select":
             return select_transforms(args.probing_base)
+        if args.command == "validate-sweep":
+            return validate_sweep(args.probing_base)
         return validate_selected(args.probing_base)
     except (SweepError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

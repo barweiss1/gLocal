@@ -180,7 +180,9 @@ PARAM_FEATURE_JOB=$(sbatch --parsable \
 ```
 
 This exports `none` and all four lambda values for both naive and global from the
-same raw feature batches. The output root is `features-export-param-sweep`:
+same raw feature batches. It validates the 32 per-lambda artifacts directly and
+does not require the top-level selected transforms or a selection job. The output
+root is `features-export-param-sweep`:
 
 ```text
 features-export-param-sweep/<model>/<dataset>/none/test-batch-000000.npz

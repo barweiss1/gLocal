@@ -120,6 +120,7 @@ class ClipTransformSweepTests(unittest.TestCase):
                 accuracy = 0.8 if spec.lambda_label in {"1.0", "10.0"} else 0.7
                 self.publish_candidate(root, spec, cross_entropy, accuracy)
 
+            self.assertEqual(sweep.validate_sweep(root), 0)
             self.assertEqual(sweep.select_transforms(root), 0)
             for kind, _regularization in sweep.KINDS:
                 for _model, model_slug in sweep.MODELS:

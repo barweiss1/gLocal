@@ -5,6 +5,7 @@
   "compute_batch_size": 32,
   "num_workers": 2,
   "allow_download": true,
+  "transform_validation": "param_sweep",
   "transforms": [
     "none",
     "naive-lambda-0.01",

@@ -5,6 +5,7 @@
   "compute_batch_size": 32,
   "num_workers": 2,
   "allow_download": true,
+  "transform_validation": "selected",
   "transforms": ["none", "global", "glocal", "naive"],
   "models": [
     {

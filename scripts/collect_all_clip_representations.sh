@@ -48,6 +48,17 @@ case "$PROBING_BASE" in
     ;;
 esac
 export PROBING_BASE
+CONFIG_PATH="${CONFIG_PATH:-scripts/representation_export.clip-cifar.json}"
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Representation config not found: $CONFIG_PATH" >&2
+  exit 1
+fi
+VALIDATION_MODE="$(
+  "$PYTHON_BIN" -c \
+    'import json, sys; print(json.load(open(sys.argv[1])).get("transform_validation", "config"))' \
+    "$CONFIG_PATH"
+)"
+
 transform_path() {
   local kind="$1"
   local slug="$2"
@@ -84,18 +95,31 @@ TRANSFORM_PATHS=(
   "$OPENCLIP_LAION2B_NAIVE_TRANSFORM"
   "$OPENCLIP_LAION2B_GLOBAL_TRANSFORM"
 )
-for path in "${TRANSFORM_PATHS[@]}"; do
-  if [[ ! -f "$path" ]]; then
-    echo "Trained transform not found: $path" >&2
-    echo "Run scripts/train_clip_transforms.sh first." >&2
+
+case "$VALIDATION_MODE" in
+  selected)
+    for path in "${TRANSFORM_PATHS[@]}"; do
+      if [[ ! -f "$path" ]]; then
+        echo "Selected transform not found: $path" >&2
+        echo "Run scripts/select_clip_transforms.sh first." >&2
+        exit 1
+      fi
+    done
+    "$PYTHON_BIN" scripts/clip_transform_sweep.py validate-selected \
+      --probing-base "$PROBING_BASE"
+    ;;
+  param_sweep)
+    "$PYTHON_BIN" scripts/clip_transform_sweep.py validate-sweep \
+      --probing-base "$PROBING_BASE"
+    ;;
+  config)
+    ;;
+  *)
+    echo "Unsupported transform_validation mode in $CONFIG_PATH: $VALIDATION_MODE" >&2
     exit 1
-  fi
-done
+    ;;
+esac
 
-"$PYTHON_BIN" scripts/clip_transform_sweep.py validate-selected \
-  --probing-base "$PROBING_BASE"
-
-CONFIG_PATH="${CONFIG_PATH:-scripts/representation_export.clip-cifar.json}"
 echo "Collecting with config: $CONFIG_PATH"
 "$PYTHON_BIN" scripts/collect_representations.py \
   --config "$CONFIG_PATH" \
