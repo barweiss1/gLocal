@@ -1,0 +1,104 @@
+{
+  "features_root": "../features-export-param-sweep",
+  "device": "cuda",
+  "logical_batch_size": 1024,
+  "compute_batch_size": 32,
+  "num_workers": 2,
+  "allow_download": true,
+  "transforms": [
+    "none",
+    "naive-lambda-0.01",
+    "naive-lambda-0.1",
+    "naive-lambda-1.0",
+    "naive-lambda-10.0",
+    "global-lambda-0.01",
+    "global-lambda-0.1",
+    "global-lambda-1.0",
+    "global-lambda-10.0"
+  ],
+  "transform_variants": {
+    "none": {
+      "kind": "none"
+    },
+    "naive-lambda-0.01": {
+      "kind": "naive",
+      "lambda": "0.01",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "naive-lambda-0.1": {
+      "kind": "naive",
+      "lambda": "0.1",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "naive-lambda-1.0": {
+      "kind": "naive",
+      "lambda": "1.0",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "naive-lambda-10.0": {
+      "kind": "naive",
+      "lambda": "10.0",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "global-lambda-0.01": {
+      "kind": "global",
+      "lambda": "0.01",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "global-lambda-0.1": {
+      "kind": "global",
+      "lambda": "0.1",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "global-lambda-1.0": {
+      "kind": "global",
+      "lambda": "1.0",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    },
+    "global-lambda-10.0": {
+      "kind": "global",
+      "lambda": "10.0",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz"
+    }
+  },
+  "models": [
+    {
+      "name": "clip_RN50",
+      "source": "custom",
+      "layer": "visual"
+    },
+    {
+      "name": "clip_ViT-L/14",
+      "slug": "clip_ViT-L-14",
+      "source": "custom",
+      "layer": "visual"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion400m_e32",
+      "source": "custom",
+      "layer": "visual"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
+      "source": "custom",
+      "layer": "visual"
+    }
+  ],
+  "datasets": [
+    {
+      "name": "cifar10",
+      "root": "../datasets",
+      "splits": ["test"]
+    },
+    {
+      "name": "cifar100",
+      "root": "../datasets",
+      "splits": ["test"]
+    },
+    {
+      "name": "cifar100-coarse",
+      "root": "../datasets",
+      "splits": ["test"]
+    }
+  ]
+}

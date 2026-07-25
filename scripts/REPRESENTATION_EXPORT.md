@@ -166,6 +166,36 @@ The dependency starts collection only after the 32 sweep tasks and selection job
 succeed. Collection validates all eight top-level selected transforms and their
 manifests before loading a model or dataset.
 
+### Collect every naive/global lambda
+
+To compare the complete parameter sweep instead of only the selected transforms,
+use the parameter-sweep configuration:
+
+```bash
+export CONFIG_PATH=scripts/representation_export.clip-param-sweep.json
+
+PARAM_FEATURE_JOB=$(sbatch --parsable \
+  --export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python,CONFIG_PATH=$CONFIG_PATH" \
+  scripts/collect_all_clip_representations.sh)
+```
+
+This exports `none` and all four lambda values for both naive and global from the
+same raw feature batches. The output root is `features-export-param-sweep`:
+
+```text
+features-export-param-sweep/<model>/<dataset>/none/test-batch-000000.npz
+features-export-param-sweep/<model>/<dataset>/naive-lambda-0.01/test-batch-000000.npz
+features-export-param-sweep/<model>/<dataset>/naive-lambda-0.1/test-batch-000000.npz
+features-export-param-sweep/<model>/<dataset>/naive-lambda-1.0/test-batch-000000.npz
+features-export-param-sweep/<model>/<dataset>/naive-lambda-10.0/test-batch-000000.npz
+features-export-param-sweep/<model>/<dataset>/global-lambda-0.01/test-batch-000000.npz
+...
+```
+
+The command is resumable and the configuration can be narrowed with repeated
+`--model`, `--dataset`, or `--transform` arguments. For example,
+`--transform none --transform global-lambda-0.1` exports only those two variants.
+
 The CIFAR `-shift`, `-rvo`, and `cifar10vs100` variants are AD evaluation protocols
 derived from these image sets, not additional representation-extraction datasets.
 

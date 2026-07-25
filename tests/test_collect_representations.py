@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -21,6 +23,42 @@ class FakeExtractor:
 
 
 class CollectRepresentationsTests(unittest.TestCase):
+    def test_parameter_sweep_config_resolves_named_variants(self):
+        probing_root = Path("/tmp/example-probing-root").resolve()
+        with patch.dict(os.environ, {"PROBING_BASE": str(probing_root)}):
+            config = collect.load_config(
+                Path("scripts/representation_export.clip-param-sweep.json"),
+                selected_models=["clip_RN50"],
+                selected_datasets=["cifar100"],
+            )
+
+        self.assertEqual(len(config["transforms"]), 9)
+        self.assertEqual(
+            config["transform_specs"]["naive-lambda-0.1"]["kind"], "naive"
+        )
+        self.assertEqual(
+            config["transform_specs"]["global-lambda-10.0"]["kind"], "global"
+        )
+        self.assertEqual(
+            config["models"][0]["naive-lambda-0.1_transform"],
+            probing_root
+            / "selected"
+            / "naive"
+            / "clip_RN50"
+            / "param_sweep"
+            / "transform_lambda_0.1.npz",
+        )
+
+    def test_parameter_sweep_config_can_filter_one_variant(self):
+        with patch.dict(os.environ, {"PROBING_BASE": "/tmp/example-probing-root"}):
+            config = collect.load_config(
+                Path("scripts/representation_export.clip-param-sweep.json"),
+                selected_models=["clip_RN50"],
+                selected_datasets=["cifar100"],
+                selected_transforms=["none", "global-lambda-1.0"],
+            )
+        self.assertEqual(config["transforms"], ["none", "global-lambda-1.0"])
+
     def test_transform_and_microbatch(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "transform.npz"

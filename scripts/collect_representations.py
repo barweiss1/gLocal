@@ -2,9 +2,10 @@
 """Export aligned model representations in resumable NPZ batches.
 
 The wrapper extracts each model's raw features once per logical batch and writes
-the selected ``none``, ``global``, ``glocal``, and ``naive`` variants under
+configured representation variants under
 ``<features>/<model>/<dataset>/<transform>/``. Dataset catalogs keep sample order
-identical across models and variants.
+identical across models and variants. Variants may name individual parameter
+settings while declaring one of the base transform kinds.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ def load_config(
 
     Command-line selections override the configured transform list and filter the
     model and dataset lists. Transform paths are required only for selected
-    transformed variants, so a ``none``/``glocal`` run does not need globals.
+    transformed variants.
     """
     path = path.resolve()
     with path.open("r", encoding="utf-8") as handle:
@@ -80,13 +81,40 @@ def load_config(
     config.setdefault("compute_batch_size", 128)
     config.setdefault("num_workers", 4)
     config.setdefault("allow_download", False)
-    transforms = list(selected_transforms or config.get("transforms", TRANSFORMS))
-    invalid_transforms = sorted(set(transforms) - set(TRANSFORMS))
+    configured_specs = config.get("transform_variants")
+    if configured_specs is None:
+        variant_specs = {kind: {"kind": kind} for kind in TRANSFORMS}
+    else:
+        if not isinstance(configured_specs, dict) or not configured_specs:
+            raise ExportError("transform_variants must be a non-empty object")
+        variant_specs = {}
+        for name, value in configured_specs.items():
+            if slug(name) != name:
+                raise ExportError(f"Transform variant is not filesystem-safe: {name}")
+            if isinstance(value, str):
+                spec = {"kind": value}
+            elif isinstance(value, dict):
+                spec = dict(value)
+            else:
+                raise ExportError(
+                    f"Transform variant {name} must be a string or object"
+                )
+            if spec.get("kind") not in TRANSFORMS:
+                raise ExportError(
+                    f"Transform variant {name} has unsupported kind {spec.get('kind')!r}"
+                )
+            variant_specs[name] = spec
+
+    transforms = list(selected_transforms or config.get("transforms", variant_specs))
+    invalid_transforms = sorted(set(transforms) - set(variant_specs))
     if invalid_transforms:
-        raise ExportError(f"Unsupported transforms: {invalid_transforms}")
+        raise ExportError(f"Unconfigured transform variants: {invalid_transforms}")
     if not transforms:
         raise ExportError("The selected transform set is empty")
     config["transforms"] = list(dict.fromkeys(transforms))
+    config["transform_specs"] = {
+        name: variant_specs[name] for name in config["transforms"]
+    }
 
     models = []
     for item in config["models"]:
@@ -94,20 +122,47 @@ def load_config(
             continue
         model = dict(item)
         model["slug"] = model.get("slug", slug(model["name"]))
-        for kind in config["transforms"]:
+        configured_paths = model.get("transform_paths", {})
+        if not isinstance(configured_paths, dict):
+            raise ExportError(f"{model['name']} transform_paths must be an object")
+        for variant in config["transforms"]:
+            kind = config["transform_specs"][variant]["kind"]
             if kind == "none":
                 continue
-            key = f"{kind}_transform"
-            if key not in model:
-                raise ExportError(f"{model['name']} is missing {key}")
-            model[key] = resolve_path(model[key], path.parent)
+            key = f"{variant}_transform"
+            configured_path = configured_paths.get(variant)
+            if configured_path is None and "path_template" in config["transform_specs"][variant]:
+                template = config["transform_specs"][variant]["path_template"]
+                if not isinstance(template, str):
+                    raise ExportError(f"path_template for {variant} must be a string")
+                template_values = {
+                    "model": model["name"],
+                    "model_slug": model["slug"],
+                    "variant": variant,
+                    **config["transform_specs"][variant],
+                }
+                try:
+                    configured_path = template.format_map(template_values)
+                except KeyError as exc:
+                    raise ExportError(
+                        f"Unknown placeholder {exc} in path template for {variant}"
+                    ) from exc
+            if configured_path is None and variant == kind:
+                configured_path = model.get(f"{kind}_transform")
+            if configured_path is None:
+                raise ExportError(
+                    f"{model['name']} is missing transform_paths[{variant!r}]"
+                )
+            model[key] = resolve_path(configured_path, path.parent)
             if kind == "naive" and model[key].suffix.lower() in {".pkl", ".pickle"}:
-                stats_key = "naive_stats_transform"
-                stats_path = model.get(stats_key, model.get("glocal_transform"))
+                stats_key = f"{variant}_stats_transform"
+                stats_path = configured_paths.get(
+                    f"{variant}_stats",
+                    model.get("naive_stats_transform", model.get("glocal_transform")),
+                )
                 if stats_path is None:
                     raise ExportError(
-                        f"{model['name']} needs naive_stats_transform or "
-                        "glocal_transform for THINGS normalization"
+                        f"{model['name']} needs normalization stats for {variant}"
                     )
                 model[stats_key] = resolve_path(stats_path, path.parent)
         models.append(model)
@@ -260,11 +315,15 @@ def load_naive_transform(
     }
 
 
-def load_model_transform(model: Mapping[str, Any], kind: str) -> Dict[str, Any]:
-    """Load an NPZ transform or the model entry from a naive pickle artifact."""
-    path = model[f"{kind}_transform"]
+def load_model_transform(
+    model: Mapping[str, Any], variant: str, kind: Optional[str] = None
+) -> Dict[str, Any]:
+    """Load one named variant from an NPZ or nested naive pickle artifact."""
+    kind = kind or variant
+    path = model[f"{variant}_transform"]
     if kind == "naive" and path.suffix.lower() in {".pkl", ".pickle"}:
-        return load_naive_transform(path, model, model["naive_stats_transform"])
+        stats_key = f"{variant}_stats_transform"
+        return load_naive_transform(path, model, model[stats_key])
     return load_transform(path)
 
 
@@ -481,11 +540,11 @@ def extract(config: Mapping[str, Any]) -> None:
 
     config["features_root"].mkdir(parents=True, exist_ok=True)
     for model in config["models"]:
-        transforms = {
-            kind: load_model_transform(model, kind)
-            for kind in config["transforms"]
-            if kind != "none"
-        }
+        transforms = {}
+        for variant in config["transforms"]:
+            kind = config["transform_specs"][variant]["kind"]
+            if kind != "none":
+                transforms[variant] = load_model_transform(model, variant, kind)
         dimensions = {value["weights"].shape for value in transforms.values()}
         if len(dimensions) > 1:
             raise ExportError(f"Transform dimensions differ for {model['name']}")
@@ -528,10 +587,14 @@ def extract(config: Mapping[str, Any]) -> None:
                         / batch_name(split, index)
                         for kind in config["transforms"]
                     }
-                    transform_hashes = {"none": "none"}
-                    transform_hashes.update(
-                        {kind: value["sha256"] for kind, value in transforms.items()}
-                    )
+                    transform_hashes = {
+                        variant: (
+                            "none"
+                            if config["transform_specs"][variant]["kind"] == "none"
+                            else transforms[variant]["sha256"]
+                        )
+                        for variant in config["transforms"]
+                    }
                     if all(
                         batch_is_valid(
                             paths[kind], sample_ids, kind, transform_hashes[kind]
@@ -551,13 +614,15 @@ def extract(config: Mapping[str, Any]) -> None:
                     )
                     variants = {}
                     for kind in config["transforms"]:
+                        is_none = config["transform_specs"][kind]["kind"] == "none"
                         variants[kind] = (
                             raw
-                            if kind == "none"
+                            if is_none
                             else apply_transform(raw, transforms[kind])
                         )
                     for kind, features in variants.items():
-                        transform = None if kind == "none" else transforms[kind]
+                        is_none = config["transform_specs"][kind]["kind"] == "none"
+                        transform = None if is_none else transforms[kind]
                         values = {
                             "features": features,
                             "labels": labels,
@@ -567,6 +632,9 @@ def extract(config: Mapping[str, Any]) -> None:
                             "dataset": text(dataset_spec["name"]),
                             "split": text(split),
                             "transform": text(kind),
+                            "transform_kind": text(
+                                config["transform_specs"][kind]["kind"]
+                            ),
                             "layer": text(model["layer"]),
                             "compute_batch_size": np.asarray(used_batch_size),
                             "transform_sha256": text(
@@ -584,7 +652,8 @@ def extract(config: Mapping[str, Any]) -> None:
                         f"Extraction count differs for {dataset_spec['name']}:{split}"
                     )
             for kind in config["transforms"]:
-                transform = None if kind == "none" else transforms[kind]
+                is_none = config["transform_specs"][kind]["kind"] == "none"
+                transform = None if is_none else transforms[kind]
                 write_json(
                     output_dir(config, model, dataset_spec, kind) / "metadata.json",
                     {
@@ -593,6 +662,7 @@ def extract(config: Mapping[str, Any]) -> None:
                         "layer": model["layer"],
                         "dataset": dataset_spec["name"],
                         "transform": kind,
+                        "transform_kind": config["transform_specs"][kind]["kind"],
                         "transform_path": (
                             None if transform is None else str(transform["path"])
                         ),
@@ -703,8 +773,7 @@ def parse_args() -> argparse.Namespace:
         "--transform",
         action="append",
         dest="transforms",
-        choices=TRANSFORMS,
-        help="representation variant to export; repeat to select more than one",
+        help="configured representation variant; repeat to select more than one",
     )
     return parser.parse_args()
 

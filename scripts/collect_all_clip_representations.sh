@@ -47,6 +47,7 @@ case "$PROBING_BASE" in
     exit 1
     ;;
 esac
+export PROBING_BASE
 transform_path() {
   local kind="$1"
   local slug="$2"
