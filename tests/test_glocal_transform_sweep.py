@@ -127,6 +127,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             model_slug="clip_RN50",
             source="custom",
             module="penultimate",
+            module_name="visual",
             lambda_label="0.001",
             alpha_label="0.05",
             tau_label="0.025",
@@ -224,7 +225,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             data_root=data_root,
             features=features_path,
             imagenet_root=imagenet_root,
-            model_dict=model_dict,
+            model_dict=None,
             probing_base=root / "published",
             scratch_root=root / "scratch",
             device="gpu",
@@ -258,6 +259,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             metadata = sweep.validate_result(args.probing_base, spec)
             self.assertEqual(metadata["configuration"]["optimizer"], "sgd")
             self.assertEqual(metadata["configuration"]["regularization"], "eye")
+            self.assertEqual(metadata["configuration"]["module_name"], "visual")
             self.assertEqual(
                 metadata["configuration"]["fold_policy"],
                 "first_deterministic_kfold_split",
@@ -300,6 +302,26 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 with self.assertRaisesRegex(sweep.SweepError, "no image files"):
                     sweep.run_task(args)
                 importer.assert_not_called()
+
+    def test_optional_model_dictionary_must_agree_with_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.make_run_fixture(Path(directory))
+            model_dict = Path(directory) / "model_dict.json"
+            model_dict.write_text(
+                json.dumps(
+                    {
+                        "clip_RN50": {
+                            "penultimate": {
+                                "module_name": "wrong-layer",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args.model_dict = model_dict
+            with self.assertRaisesRegex(sweep.SweepError, "expected 'visual'"):
+                sweep.run_task(args)
 
 
 if __name__ == "__main__":

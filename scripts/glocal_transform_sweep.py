@@ -56,6 +56,7 @@ class ModelSpec:
     slug: str
     source: str = "custom"
     module: str = "penultimate"
+    module_name: str = "visual"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class TaskSpec:
     model_slug: str
     source: str
     module: str
+    module_name: str
     lambda_label: str
     alpha_label: str
     tau_label: str
@@ -88,7 +90,7 @@ class PreparedInputs:
     data_root: Path
     features_path: Path
     imagenet_root: Path
-    model_dict_path: Path
+    model_dict_path: Optional[Path]
     probing_base: Path
     feature_matrix: np.ndarray
     input_metadata: Dict[str, Any]
@@ -128,9 +130,18 @@ def load_models(config_path: Path) -> tuple[ModelSpec, ...]:
             slug = value.get("slug", default_slug(name))
             source = value.get("source", "custom")
             module = value.get("module", "penultimate")
-            if not all(isinstance(item, str) for item in (slug, source, module)):
+            module_name = value.get("module_name", "visual")
+            if not all(
+                isinstance(item, str) for item in (slug, source, module, module_name)
+            ):
                 raise SweepError(f"models[{index}] fields must be strings")
-            model = ModelSpec(name=name, slug=slug, source=source, module=module)
+            model = ModelSpec(
+                name=name,
+                slug=slug,
+                source=source,
+                module=module,
+                module_name=module_name,
+            )
         else:
             raise SweepError(f"models[{index}] must be a string or object")
 
@@ -171,6 +182,7 @@ def all_specs(models: Sequence[ModelSpec]) -> Iterable[TaskSpec]:
                         model_slug=model.slug,
                         source=model.source,
                         module=model.module,
+                        module_name=model.module_name,
                         lambda_label=lambda_label,
                         alpha_label=alpha_label,
                         tau_label=tau_label,
@@ -288,6 +300,7 @@ def expected_configuration(
         "model_slug": spec.model_slug,
         "source": spec.source,
         "module": spec.module,
+        "module_name": spec.module_name,
         "lambda": spec.lmbda,
         "lambda_label": spec.lambda_label,
         "alpha": spec.alpha,
@@ -394,7 +407,7 @@ def require_file(path: Path, description: str) -> None:
 
 
 def reject_placeholder(path: Path, description: str) -> None:
-    if str(path).startswith("/path/to"):
+    if str(path).startswith(("/path/to", "/actual/path/to")):
         raise SweepError(f"{description} is still a documentation placeholder: {path}")
 
 
@@ -441,25 +454,32 @@ def input_metadata(
     data_root: Path,
     features_path: Path,
     imagenet_root: Path,
-    model_dict_path: Path,
+    model_dict_path: Optional[Path],
 ) -> Dict[str, Any]:
+    paths = {
+        "config": str(config_path),
+        "repo_root": str(repo_root),
+        "data_root": str(data_root),
+        "features": str(features_path),
+        "imagenet_root": str(imagenet_root),
+        "model_dict": str(model_dict_path) if model_dict_path else None,
+    }
+    hashes = {
+        "config": sha256(config_path),
+        "features": sha256(features_path),
+        "train_triplets": sha256(data_root / "triplets" / "train_90.npy"),
+        "test_triplets": sha256(data_root / "triplets" / "test_10.npy"),
+        "main_glocal_probing": sha256(repo_root / "main_glocal_probing.py"),
+        "glocal_transform_sweep": sha256(Path(__file__).resolve()),
+    }
+    if model_dict_path is not None:
+        hashes["model_dict"] = sha256(model_dict_path)
     return {
         "paths": {
-            "config": str(config_path),
-            "repo_root": str(repo_root),
-            "data_root": str(data_root),
-            "features": str(features_path),
-            "imagenet_root": str(imagenet_root),
-            "model_dict": str(model_dict_path),
+            **paths,
         },
         "sha256": {
-            "config": sha256(config_path),
-            "features": sha256(features_path),
-            "train_triplets": sha256(data_root / "triplets" / "train_90.npy"),
-            "test_triplets": sha256(data_root / "triplets" / "test_10.npy"),
-            "model_dict": sha256(model_dict_path),
-            "main_glocal_probing": sha256(repo_root / "main_glocal_probing.py"),
-            "glocal_transform_sweep": sha256(Path(__file__).resolve()),
+            **hashes,
         },
     }
 
@@ -475,7 +495,9 @@ def preflight(
     data_root = args.data_root.expanduser().resolve()
     features_path = args.features.expanduser().resolve()
     imagenet_root = args.imagenet_root.expanduser().resolve()
-    model_dict_path = args.model_dict.expanduser().resolve()
+    model_dict_path = (
+        args.model_dict.expanduser().resolve() if args.model_dict else None
+    )
     probing_base = args.probing_base.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
 
@@ -484,30 +506,35 @@ def preflight(
         (data_root, "THINGS root"),
         (features_path, "THINGS features"),
         (imagenet_root, "ImageNet root"),
-        (model_dict_path, "Model dictionary"),
         (probing_base, "Probing output root"),
     ):
         reject_placeholder(path, description)
+    if model_dict_path is not None:
+        reject_placeholder(model_dict_path, "Model dictionary")
 
     require_file(repo_root / "main_glocal_probing.py", "Published gLocal entry point")
     require_file(config_path, "Sweep configuration")
     require_file(features_path, "THINGS features")
-    require_file(model_dict_path, "Model dictionary")
     validate_triplets(data_root / "triplets" / "train_90.npy", args.n_objects)
     validate_triplets(data_root / "triplets" / "test_10.npy", args.n_objects)
     validate_imagenet_split(imagenet_root / "train_set")
     validate_imagenet_split(imagenet_root / "val_set")
 
-    model_dictionary = read_json(model_dict_path)
-    try:
-        module_name = model_dictionary[spec.model][spec.module]["module_name"]
-    except (KeyError, TypeError) as error:
-        raise SweepError(
-            f"Model dictionary has no module_name for "
-            f"{spec.model}/{spec.module}: {model_dict_path}"
-        ) from error
-    if not isinstance(module_name, str) or not module_name:
-        raise SweepError(f"Invalid module_name for {spec.model}/{spec.module}")
+    if model_dict_path is not None:
+        require_file(model_dict_path, "Model dictionary")
+        model_dictionary = read_json(model_dict_path)
+        try:
+            module_name = model_dictionary[spec.model][spec.module]["module_name"]
+        except (KeyError, TypeError) as error:
+            raise SweepError(
+                f"Model dictionary has no module_name for "
+                f"{spec.model}/{spec.module}: {model_dict_path}"
+            ) from error
+        if module_name != spec.module_name:
+            raise SweepError(
+                f"Model dictionary module_name for {spec.model}/{spec.module} is "
+                f"{module_name!r}, expected {spec.module_name!r}"
+            )
 
     try:
         with features_path.open("rb") as source:
@@ -654,7 +681,15 @@ def execute_upstream(
         contrastive_batch_size=CONTRASTIVE_BATCH_SIZE,
         out_path=str(snapshot_dir),
     )
-    model_cfg = upstream.create_model_config(upstream_args)
+    if prepared.model_dict_path is not None:
+        model_cfg = upstream.create_model_config(upstream_args)
+    else:
+        model_cfg = {
+            "model": spec.model,
+            "module": spec.module_name,
+            "source": spec.source,
+            "device": "cuda" if args.device == "gpu" else args.device,
+        }
     upstream.seed_everything(SEED, workers=True)
     _choices, results, transform, mean, std = upstream.run(
         features=prepared.feature_matrix,
@@ -795,7 +830,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--data-root", type=Path, required=True)
     run_parser.add_argument("--features", type=Path, required=True)
     run_parser.add_argument("--imagenet-root", type=Path, required=True)
-    run_parser.add_argument("--model-dict", type=Path, required=True)
+    run_parser.add_argument(
+        "--model-dict",
+        type=Path,
+        help="Optional external model dictionary; CLIP defaults to module 'visual'.",
+    )
     run_parser.add_argument("--probing-base", type=Path, required=True)
     run_parser.add_argument("--scratch-root", type=Path)
     run_parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")

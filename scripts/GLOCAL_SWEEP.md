@@ -28,8 +28,9 @@ IMAGENET_ROOT/
 The THINGS root needs `triplets/train_90.npy` and `triplets/test_10.npy`.
 `THINGS_FEATURES` defaults to `$THINGS_DATA_ROOT/features.pkl` and must contain
 each configured model at `features["custom"][model]["penultimate"]`.
-`MODEL_DICT_PATH` must point to the model dictionary used by the published
-probing entry point.
+The CLIP configuration supplies the extractor module name (`visual`) directly, so
+an external model dictionary is not required. If `MODEL_DICT_PATH` is supplied,
+the wrapper validates that its module name agrees with the configuration.
 
 ## Configure and submit
 
@@ -42,7 +43,6 @@ mkdir -p logs
 export PYTHON_BIN="$CONDA_PREFIX/bin/python"
 export THINGS_DATA_ROOT=/raid/home/barweiss/datasets/things-clip-training
 export IMAGENET_ROOT=/path/to/imagenet/2012
-export MODEL_DICT_PATH=/path/to/model_dict_all.json
 export PROBING_BASE=/raid/home/barweiss/datasets/clip-transform-training
 
 scripts/submit_glocal_transforms.sh scripts/glocal_sweep.clip.json

@@ -30,9 +30,8 @@ cd "$REPO_ROOT"
 : "${GLOCAL_SWEEP_CONFIG:?Set GLOCAL_SWEEP_CONFIG to the sweep JSON file}"
 : "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the prepared THINGS directory}"
 : "${IMAGENET_ROOT:?Set IMAGENET_ROOT to the ImageNet directory}"
-: "${MODEL_DICT_PATH:?Set MODEL_DICT_PATH to model_dict_all.json}"
 
-for value_name in THINGS_DATA_ROOT IMAGENET_ROOT MODEL_DICT_PATH; do
+for value_name in THINGS_DATA_ROOT IMAGENET_ROOT; do
   value="${!value_name}"
   case "$value" in
     /path/to/*|/path/to)
@@ -41,6 +40,13 @@ for value_name in THINGS_DATA_ROOT IMAGENET_ROOT MODEL_DICT_PATH; do
       ;;
   esac
 done
+
+case "${MODEL_DICT_PATH:-}" in
+  /path/to/*|/path/to|/actual/path/to/*|/actual/path/to)
+    echo "Ignoring placeholder MODEL_DICT_PATH: $MODEL_DICT_PATH" >&2
+    unset MODEL_DICT_PATH
+    ;;
+esac
 
 THINGS_FEATURES="${THINGS_FEATURES:-$THINGS_DATA_ROOT/features.pkl}"
 PROBING_BASE="${PROBING_BASE:-$REPO_ROOT/glocal-transform-training}"
@@ -85,18 +91,23 @@ NUM_PROCESSES="${NUM_PROCESSES:-4}"
 N_OBJECTS="${N_OBJECTS:-1854}"
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
 
-"$PYTHON_BIN" scripts/glocal_transform_sweep.py run \
-  --config "$GLOCAL_SWEEP_CONFIG" \
-  --task-id "$TASK_ID" \
-  --repo-root "$REPO_ROOT" \
-  --data-root "$THINGS_DATA_ROOT" \
-  --features "$THINGS_FEATURES" \
-  --imagenet-root "$IMAGENET_ROOT" \
-  --model-dict "$MODEL_DICT_PATH" \
-  --probing-base "$PROBING_BASE" \
-  --scratch-root "$SCRATCH_ROOT" \
-  --device gpu \
-  --num-processes "$NUM_PROCESSES" \
-  --n-objects "$N_OBJECTS" \
-  --burnin "$BURNIN" \
+RUN_ARGS=(
+  --config "$GLOCAL_SWEEP_CONFIG"
+  --task-id "$TASK_ID"
+  --repo-root "$REPO_ROOT"
+  --data-root "$THINGS_DATA_ROOT"
+  --features "$THINGS_FEATURES"
+  --imagenet-root "$IMAGENET_ROOT"
+  --probing-base "$PROBING_BASE"
+  --scratch-root "$SCRATCH_ROOT"
+  --device gpu
+  --num-processes "$NUM_PROCESSES"
+  --n-objects "$N_OBJECTS"
+  --burnin "$BURNIN"
   --patience "$PATIENCE"
+)
+if [[ -n "${MODEL_DICT_PATH:-}" ]]; then
+  RUN_ARGS+=(--model-dict "$MODEL_DICT_PATH")
+fi
+
+"$PYTHON_BIN" scripts/glocal_transform_sweep.py run "${RUN_ARGS[@]}"
