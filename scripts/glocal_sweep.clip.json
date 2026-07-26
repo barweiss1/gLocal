@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "clip_RN50",
+      "slug": "clip_RN50"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
+      "slug": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k"
+    }
+  ]
+}
