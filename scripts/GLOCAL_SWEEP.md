@@ -14,6 +14,9 @@ regularization, seed 42, no bias, and the first deterministic KFold partition us
 by `main_glocal_probing.py`. The published Python file is imported unchanged.
 The wrapper only corrects OpenCLIP dataset-name parsing in memory because the raw
 runner assumes dataset identifiers contain no underscores.
+For one-GPU SLURM tasks it also disables the published runner's forced DDP mode:
+Lightning 1.8 cannot replace the sampler of the repository's custom zipped loader,
+and DDP is unnecessary when each array task owns one GPU.
 
 ## Inputs
 

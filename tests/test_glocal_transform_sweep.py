@@ -20,6 +20,7 @@ class FakeUpstream:
         self.seed_calls = []
         self.load_extractor = mock.Mock()
         self.get_extractor = mock.Mock(return_value="extractor")
+        self.Trainer = mock.Mock(return_value="trainer")
 
     def create_optimization_config(self, **kwargs):
         self.optim_configs.append(kwargs)
@@ -174,6 +175,25 @@ class GlocalTransformSweepTests(unittest.TestCase):
         upstream.load_extractor(clip_cfg)
         published_loader.assert_called_once_with(clip_cfg)
 
+    def test_single_gpu_compat_disables_ddp_sampler_replacement(self) -> None:
+        upstream = FakeUpstream()
+        published_trainer = upstream.Trainer
+        sweep.install_single_gpu_trainer_compat(upstream)
+        result = upstream.Trainer(
+            accelerator="gpu",
+            strategy="ddp",
+            devices="auto",
+            callbacks=[],
+        )
+        self.assertEqual(result, "trainer")
+        published_trainer.assert_called_once_with(
+            accelerator="gpu",
+            strategy=None,
+            devices=1,
+            callbacks=[],
+            replace_sampler_ddp=False,
+        )
+
     def make_run_fixture(self, root: Path) -> argparse.Namespace:
         config = self.write_config(root)
         data_root = root / "things"
@@ -263,6 +283,10 @@ class GlocalTransformSweepTests(unittest.TestCase):
             self.assertEqual(
                 metadata["configuration"]["fold_policy"],
                 "first_deterministic_kfold_split",
+            )
+            self.assertEqual(
+                metadata["configuration"]["trainer_policy"],
+                "single_gpu_without_distributed_sampler_replacement",
             )
             self.assertEqual(metadata["metrics"]["test_accuracy"], 0.61)
 

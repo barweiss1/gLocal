@@ -320,6 +320,7 @@ def expected_configuration(
         "bias": False,
         "fold_policy": "first_deterministic_kfold_split",
         "n_splits": N_SPLITS,
+        "trainer_policy": "single_gpu_without_distributed_sampler_replacement",
     }
 
 
@@ -631,6 +632,32 @@ def install_openclip_extractor_compat(upstream: Any) -> None:
     upstream.load_extractor = load_extractor
 
 
+def install_single_gpu_trainer_compat(upstream: Any) -> None:
+    """Prevent Lightning DDP from replacing the custom zipped-loader sampler.
+
+    The published raw runner requests ``strategy="ddp"`` even for a one-GPU
+    task. Lightning 1.8 then tries to wrap ``ZippedBatchLoader.sampler``, which
+    is intentionally ``None``, and fails before the sanity check. A one-GPU
+    task does not need DDP, so remove that strategy and sampler replacement in
+    the imported module object only.
+    """
+
+    published_trainer = upstream.Trainer
+
+    def trainer(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("accelerator") == "gpu":
+            kwargs["strategy"] = None
+            kwargs["devices"] = 1
+            kwargs["replace_sampler_ddp"] = False
+            print(
+                "[gLocal wrapper] Using one GPU without DDP sampler replacement.",
+                flush=True,
+            )
+        return published_trainer(*args, **kwargs)
+
+    upstream.Trainer = trainer
+
+
 def finite_metric(results: Mapping[str, Any], source_name: str) -> float:
     values = results.get(source_name)
     if not isinstance(values, (list, tuple)) or len(values) != 1:
@@ -652,6 +679,7 @@ def execute_upstream(
     """Call the published raw-image training function once for one parameter tuple."""
     upstream = import_upstream(prepared.repo_root)
     install_openclip_extractor_compat(upstream)
+    install_single_gpu_trainer_compat(upstream)
     snapshot_dir = temporary / "snapshots"
     checkpoint_dir = temporary / "checkpoints"
     snapshot_dir.mkdir(parents=True)
