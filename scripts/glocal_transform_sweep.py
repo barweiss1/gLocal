@@ -321,6 +321,7 @@ def expected_configuration(
         "fold_policy": "first_deterministic_kfold_split",
         "n_splits": N_SPLITS,
         "trainer_policy": "single_gpu_without_distributed_sampler_replacement",
+        "teacher_feature_device_policy": "probe_parameter_device",
     }
 
 
@@ -658,6 +659,30 @@ def install_single_gpu_trainer_compat(upstream: Any) -> None:
     upstream.Trainer = trainer
 
 
+def install_teacher_feature_device_compat(upstream: Any) -> None:
+    """Move ThingsVision's extracted ImageNet features to the probe device.
+
+    With the repository's ThingsVision version, ``extract_features`` can return
+    a CPU tensor even when the extractor and Lightning module use CUDA. The
+    published probe then multiplies that tensor by its CUDA transform matrix.
+    Patch the imported probe class only, at the narrow normalization boundary,
+    so CPU and CUDA runs both use the device already selected by Lightning.
+    """
+
+    probe_class = upstream.utils.probing.GlocalProbe
+    published_normalize_features = probe_class.normalize_features
+
+    def normalize_features(self: Any, features: Any) -> Any:
+        features = features.to(self.transform_w.device)
+        return published_normalize_features(self, features)
+
+    probe_class.normalize_features = normalize_features
+    print(
+        "[gLocal wrapper] Aligning extracted ImageNet features with the probe device.",
+        flush=True,
+    )
+
+
 def finite_metric(results: Mapping[str, Any], source_name: str) -> float:
     values = results.get(source_name)
     if not isinstance(values, (list, tuple)) or len(values) != 1:
@@ -680,6 +705,7 @@ def execute_upstream(
     upstream = import_upstream(prepared.repo_root)
     install_openclip_extractor_compat(upstream)
     install_single_gpu_trainer_compat(upstream)
+    install_teacher_feature_device_compat(upstream)
     snapshot_dir = temporary / "snapshots"
     checkpoint_dir = temporary / "checkpoints"
     snapshot_dir.mkdir(parents=True)

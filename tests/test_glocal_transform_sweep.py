@@ -6,6 +6,7 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -21,6 +22,15 @@ class FakeUpstream:
         self.load_extractor = mock.Mock()
         self.get_extractor = mock.Mock(return_value="extractor")
         self.Trainer = mock.Mock(return_value="trainer")
+
+        class FakeProbe:
+            @staticmethod
+            def normalize_features(_self, features):
+                return features
+
+        self.utils = SimpleNamespace(
+            probing=SimpleNamespace(GlocalProbe=FakeProbe),
+        )
 
     def create_optimization_config(self, **kwargs):
         self.optim_configs.append(kwargs)
@@ -194,6 +204,34 @@ class GlocalTransformSweepTests(unittest.TestCase):
             replace_sampler_ddp=False,
         )
 
+    def test_teacher_features_are_moved_to_probe_device(self) -> None:
+        class FakeTensor:
+            def __init__(self, device):
+                self.device = device
+                self.moves = []
+
+            def to(self, device):
+                self.moves.append(device)
+                self.device = device
+                return self
+
+        class FakeProbe:
+            def normalize_features(self, features):
+                return features.device
+
+        upstream = SimpleNamespace(
+            utils=SimpleNamespace(
+                probing=SimpleNamespace(GlocalProbe=FakeProbe),
+            )
+        )
+        sweep.install_teacher_feature_device_compat(upstream)
+        probe = FakeProbe()
+        probe.transform_w = FakeTensor("cuda:0")
+        features = FakeTensor("cpu")
+
+        self.assertEqual(probe.normalize_features(features), "cuda:0")
+        self.assertEqual(features.moves, ["cuda:0"])
+
     def make_run_fixture(self, root: Path) -> argparse.Namespace:
         config = self.write_config(root)
         data_root = root / "things"
@@ -287,6 +325,10 @@ class GlocalTransformSweepTests(unittest.TestCase):
             self.assertEqual(
                 metadata["configuration"]["trainer_policy"],
                 "single_gpu_without_distributed_sampler_replacement",
+            )
+            self.assertEqual(
+                metadata["configuration"]["teacher_feature_device_policy"],
+                "probe_parameter_device",
             )
             self.assertEqual(metadata["metrics"]["test_accuracy"], 0.61)
 

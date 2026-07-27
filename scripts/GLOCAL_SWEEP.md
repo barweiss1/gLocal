@@ -17,6 +17,9 @@ runner assumes dataset identifiers contain no underscores.
 For one-GPU SLURM tasks it also disables the published runner's forced DDP mode:
 Lightning 1.8 cannot replace the sampler of the repository's custom zipped loader,
 and DDP is unnecessary when each array task owns one GPU.
+The repository's ThingsVision version may return extracted ImageNet features on
+CPU even when the probe is on CUDA. The wrapper aligns that tensor with the
+probe's transform-matrix device immediately before normalization.
 
 ## Inputs
 
