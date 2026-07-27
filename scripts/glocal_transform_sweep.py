@@ -37,6 +37,7 @@ REGULARIZATION = "eye"
 SIGMA = "0.001"
 TRIPLET_BATCH_SIZE = 256
 CONTRASTIVE_BATCH_SIZE = 1024
+IMAGENET_WORKERS = 2
 MAX_EPOCHS = 100
 BURNIN = 20
 PATIENCE = 20
@@ -209,6 +210,14 @@ def validate_stop_policy(burnin: int, patience: int) -> None:
         )
 
 
+def validate_imagenet_workers(imagenet_workers: int) -> None:
+    """Reject worker counts that cannot construct a PyTorch DataLoader."""
+    if imagenet_workers < 0:
+        raise SweepError(
+            f"ImageNet worker count must be non-negative, got {imagenet_workers}"
+        )
+
+
 def artifact_stem(spec: TaskSpec) -> str:
     return f"lambda_{spec.lambda_label}_alpha_{spec.alpha_label}_tau_{spec.tau_label}"
 
@@ -293,7 +302,10 @@ def validate_npz(path: Path) -> Dict[str, Any]:
 
 
 def expected_configuration(
-    spec: TaskSpec, burnin: int, patience: int
+    spec: TaskSpec,
+    burnin: int,
+    patience: int,
+    imagenet_workers: int = IMAGENET_WORKERS,
 ) -> Dict[str, Any]:
     return {
         "model": spec.model,
@@ -313,6 +325,7 @@ def expected_configuration(
         "sigma": float(SIGMA),
         "triplet_batch_size": TRIPLET_BATCH_SIZE,
         "contrastive_batch_size": CONTRASTIVE_BATCH_SIZE,
+        "imagenet_workers": imagenet_workers,
         "max_epochs": MAX_EPOCHS,
         "burnin": burnin,
         "patience": patience,
@@ -332,12 +345,18 @@ def validate_result(
     patience: int = PATIENCE,
     expected_inputs: Optional[Mapping[str, Any]] = None,
     expected_revision: Optional[str] = None,
+    imagenet_workers: int = IMAGENET_WORKERS,
 ) -> Dict[str, Any]:
     metadata_path = result_path(probing_base, spec)
     metadata = read_json(metadata_path)
     if metadata.get("schema_version") != SCHEMA_VERSION:
         raise SweepError(f"Schema mismatch in {metadata_path}")
-    if metadata.get("configuration") != expected_configuration(spec, burnin, patience):
+    if metadata.get("configuration") != expected_configuration(
+        spec,
+        burnin,
+        patience,
+        imagenet_workers,
+    ):
         raise SweepError(f"Training configuration mismatch in {metadata_path}")
     if expected_inputs is not None and metadata.get("inputs") != dict(expected_inputs):
         raise SweepError(f"Training input mismatch in {metadata_path}")
@@ -683,6 +702,42 @@ def install_teacher_feature_device_compat(upstream: Any) -> None:
     )
 
 
+def install_imagenet_loader_memory_compat(
+    upstream: Any,
+    imagenet_workers: int,
+) -> None:
+    """Limit decoded ImageNet prefetching without changing training batches.
+
+    The published runner requests eight workers for both ImageNet loaders. Each
+    worker can prefetch multiple decoded 1,024-image batches, exhausting a
+    32-GiB SLURM cgroup. Keep the published batch size, shuffle, transforms, and
+    loss unchanged while capping only positive ImageNet loader worker counts.
+    """
+
+    published_get_batches = upstream.get_batches
+
+    def get_batches(
+        dataset: Any,
+        batch_size: int,
+        train: bool,
+        num_workers: int = 0,
+    ) -> Any:
+        if num_workers > 0:
+            num_workers = min(num_workers, imagenet_workers)
+        return published_get_batches(
+            dataset=dataset,
+            batch_size=batch_size,
+            train=train,
+            num_workers=num_workers,
+        )
+
+    upstream.get_batches = get_batches
+    print(
+        f"[gLocal wrapper] Using {imagenet_workers} ImageNet loader workers.",
+        flush=True,
+    )
+
+
 def finite_metric(results: Mapping[str, Any], source_name: str) -> float:
     values = results.get(source_name)
     if not isinstance(values, (list, tuple)) or len(values) != 1:
@@ -706,6 +761,7 @@ def execute_upstream(
     install_openclip_extractor_compat(upstream)
     install_single_gpu_trainer_compat(upstream)
     install_teacher_feature_device_compat(upstream)
+    install_imagenet_loader_memory_compat(upstream, args.imagenet_workers)
     snapshot_dir = temporary / "snapshots"
     checkpoint_dir = temporary / "checkpoints"
     snapshot_dir.mkdir(parents=True)
@@ -772,6 +828,7 @@ def execute_upstream(
 
 def run_task(args: argparse.Namespace) -> int:
     validate_stop_policy(args.burnin, args.patience)
+    validate_imagenet_workers(args.imagenet_workers)
     models = load_models(args.config)
     spec = task_spec(models, args.task_id)
     prepared = preflight(args, models, spec)
@@ -784,6 +841,7 @@ def run_task(args: argparse.Namespace) -> int:
             args.patience,
             prepared.input_metadata,
             prepared.repo_revision,
+            args.imagenet_workers,
         )
     except SweepError:
         pass
@@ -818,7 +876,12 @@ def run_task(args: argparse.Namespace) -> int:
         atomic_copy(temporary_transform, destination)
         metadata = {
             "schema_version": SCHEMA_VERSION,
-            "configuration": expected_configuration(spec, args.burnin, args.patience),
+            "configuration": expected_configuration(
+                spec,
+                args.burnin,
+                args.patience,
+                args.imagenet_workers,
+            ),
             "feature_dim": npz["feature_dim"],
             "inputs": prepared.input_metadata,
             "metrics": metrics,
@@ -835,6 +898,7 @@ def run_task(args: argparse.Namespace) -> int:
             args.patience,
             prepared.input_metadata,
             prepared.repo_revision,
+            args.imagenet_workers,
         )
         print(f"Published: {destination}")
     return 0
@@ -845,14 +909,22 @@ def validate_sweep(
     probing_base: Path,
     burnin: int = BURNIN,
     patience: int = PATIENCE,
+    imagenet_workers: int = IMAGENET_WORKERS,
 ) -> int:
     validate_stop_policy(burnin, patience)
+    validate_imagenet_workers(imagenet_workers)
     models = load_models(config)
     probing_base = probing_base.expanduser().resolve()
     errors = []
     for spec in all_specs(models):
         try:
-            validate_result(probing_base, spec, burnin, patience)
+            validate_result(
+                probing_base,
+                spec,
+                burnin,
+                patience,
+                imagenet_workers=imagenet_workers,
+            )
         except SweepError as error:
             errors.append(str(error))
     if errors:
@@ -893,6 +965,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--scratch-root", type=Path)
     run_parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")
     run_parser.add_argument("--num-processes", type=int, default=4)
+    run_parser.add_argument(
+        "--imagenet-workers",
+        type=int,
+        default=IMAGENET_WORKERS,
+        help="ImageNet DataLoader workers; lower this to reduce host RAM use.",
+    )
     run_parser.add_argument("--n-objects", type=int, default=1854)
     run_parser.add_argument("--burnin", type=int, default=BURNIN)
     run_parser.add_argument("--patience", type=int, default=PATIENCE)
@@ -904,6 +982,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--probing-base", type=Path, required=True)
     validate_parser.add_argument("--burnin", type=int, default=BURNIN)
     validate_parser.add_argument("--patience", type=int, default=PATIENCE)
+    validate_parser.add_argument(
+        "--imagenet-workers",
+        type=int,
+        default=IMAGENET_WORKERS,
+    )
     return parser
 
 
@@ -928,6 +1011,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.probing_base,
             args.burnin,
             args.patience,
+            args.imagenet_workers,
         )
     except SweepError as error:
         print(f"ERROR: {error}", file=sys.stderr)

@@ -5,7 +5,7 @@
 #SBATCH --partition=high
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --time=2-00:00:00
 
 set -euo pipefail
@@ -88,6 +88,7 @@ if (( PATIENCE < BURNIN )); then
 fi
 
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
+IMAGENET_WORKERS="${IMAGENET_WORKERS:-2}"
 N_OBJECTS="${N_OBJECTS:-1854}"
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
 
@@ -102,6 +103,7 @@ RUN_ARGS=(
   --scratch-root "$SCRATCH_ROOT"
   --device gpu
   --num-processes "$NUM_PROCESSES"
+  --imagenet-workers "$IMAGENET_WORKERS"
   --n-objects "$N_OBJECTS"
   --burnin "$BURNIN"
   --patience "$PATIENCE"

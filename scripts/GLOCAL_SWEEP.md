@@ -20,6 +20,9 @@ and DDP is unnecessary when each array task owns one GPU.
 The repository's ThingsVision version may return extracted ImageNet features on
 CPU even when the probe is on CUDA. The wrapper aligns that tensor with the
 probe's transform-matrix device immediately before normalization.
+The wrapper also limits ImageNet loading to two workers by default. This avoids
+prefetching many decoded 1,024-image batches into host RAM; the contrastive batch
+size and loss remain unchanged. The SLURM worker requests 64 GiB of host memory.
 
 ## Inputs
 
@@ -57,6 +60,7 @@ scripts/submit_glocal_transforms.sh scripts/glocal_sweep.clip.json
 The example configuration contains four models and therefore submits 224 tasks.
 Remove model entries to run a subset; each model contributes 56 tasks. Concurrent
 jobs default to four and can be changed with `MAX_PARALLEL`.
+Set `IMAGENET_WORKERS` if a particular node needs a different loader setting.
 
 The submit helper accepts additional `sbatch` options:
 

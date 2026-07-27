@@ -22,6 +22,7 @@ class FakeUpstream:
         self.load_extractor = mock.Mock()
         self.get_extractor = mock.Mock(return_value="extractor")
         self.Trainer = mock.Mock(return_value="trainer")
+        self.get_batches = mock.Mock(return_value="batches")
 
         class FakeProbe:
             @staticmethod
@@ -232,6 +233,26 @@ class GlocalTransformSweepTests(unittest.TestCase):
         self.assertEqual(probe.normalize_features(features), "cuda:0")
         self.assertEqual(features.moves, ["cuda:0"])
 
+    def test_imagenet_loader_workers_are_capped_without_changing_batch(self) -> None:
+        upstream = FakeUpstream()
+        published_get_batches = upstream.get_batches
+        sweep.install_imagenet_loader_memory_compat(upstream, imagenet_workers=2)
+
+        result = upstream.get_batches(
+            dataset="imagenet",
+            batch_size=1024,
+            train=True,
+            num_workers=8,
+        )
+
+        self.assertEqual(result, "batches")
+        published_get_batches.assert_called_once_with(
+            dataset="imagenet",
+            batch_size=1024,
+            train=True,
+            num_workers=2,
+        )
+
     def make_run_fixture(self, root: Path) -> argparse.Namespace:
         config = self.write_config(root)
         data_root = root / "things"
@@ -288,6 +309,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             scratch_root=root / "scratch",
             device="gpu",
             num_processes=4,
+            imagenet_workers=2,
             n_objects=3,
             burnin=20,
             patience=20,
@@ -315,6 +337,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             models = sweep.load_models(args.config)
             spec = sweep.task_spec(models, 0)
             metadata = sweep.validate_result(args.probing_base, spec)
+            self.assertEqual(metadata["configuration"]["imagenet_workers"], 2)
             self.assertEqual(metadata["configuration"]["optimizer"], "sgd")
             self.assertEqual(metadata["configuration"]["regularization"], "eye")
             self.assertEqual(metadata["configuration"]["module_name"], "visual")
