@@ -30,8 +30,8 @@ import h5py
 import numpy as np
 
 LAMBDAS = ("0.1", "0.001")
-ALPHAS = ("0.05", "0.1", "0.25", "0.5")
-TAUS = ("0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1.0")
+ALPHAS = ("0.1", "0.25", "0.5", "0.75")
+TAUS = ("0.05", "0.1", "0.25", "0.5", "1.0")
 LEARNING_RATE = "0.001"
 OPTIMIZER = "SGD"
 REGULARIZATION = "eye"
