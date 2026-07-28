@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run and validate a configurable raw-ImageNet gLocal transform sweep.
+"""Run and validate a configurable cached-ImageNet gLocal transform sweep.
 
-The published ``main_glocal_probing.py`` module owns the training behavior. This
-wrapper supplies one parameter tuple at a time, validates all inputs before the
-heavy imports, and atomically publishes a transform only after training succeeds.
+The published ``main_glocal_probing_efficient.py`` module owns the training
+behavior. This wrapper supplies one parameter tuple at a time, validates all
+inputs before heavy imports, and publishes only successful transforms.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
+import h5py
 import numpy as np
 
 LAMBDAS = ("0.1", "0.001")
@@ -37,7 +38,7 @@ REGULARIZATION = "eye"
 SIGMA = "0.001"
 TRIPLET_BATCH_SIZE = 256
 CONTRASTIVE_BATCH_SIZE = 1024
-IMAGENET_WORKERS = 2
+FEATURE_WORKERS = 2
 MAX_EPOCHS = 100
 BURNIN = 20
 PATIENCE = 20
@@ -90,8 +91,7 @@ class PreparedInputs:
     repo_root: Path
     data_root: Path
     features_path: Path
-    imagenet_root: Path
-    model_dict_path: Optional[Path]
+    imagenet_features_root: Path
     probing_base: Path
     feature_matrix: np.ndarray
     input_metadata: Dict[str, Any]
@@ -210,11 +210,11 @@ def validate_stop_policy(burnin: int, patience: int) -> None:
         )
 
 
-def validate_imagenet_workers(imagenet_workers: int) -> None:
+def validate_feature_workers(feature_workers: int) -> None:
     """Reject worker counts that cannot construct a PyTorch DataLoader."""
-    if imagenet_workers < 0:
+    if feature_workers < 0:
         raise SweepError(
-            f"ImageNet worker count must be non-negative, got {imagenet_workers}"
+            f"Feature worker count must be non-negative, got {feature_workers}"
         )
 
 
@@ -305,7 +305,7 @@ def expected_configuration(
     spec: TaskSpec,
     burnin: int,
     patience: int,
-    imagenet_workers: int = IMAGENET_WORKERS,
+    feature_workers: int = FEATURE_WORKERS,
 ) -> Dict[str, Any]:
     return {
         "model": spec.model,
@@ -325,7 +325,7 @@ def expected_configuration(
         "sigma": float(SIGMA),
         "triplet_batch_size": TRIPLET_BATCH_SIZE,
         "contrastive_batch_size": CONTRASTIVE_BATCH_SIZE,
-        "imagenet_workers": imagenet_workers,
+        "feature_workers": feature_workers,
         "max_epochs": MAX_EPOCHS,
         "burnin": burnin,
         "patience": patience,
@@ -333,8 +333,7 @@ def expected_configuration(
         "bias": False,
         "fold_policy": "first_deterministic_kfold_split",
         "n_splits": N_SPLITS,
-        "trainer_policy": "single_gpu_without_distributed_sampler_replacement",
-        "teacher_feature_device_policy": "probe_parameter_device",
+        "locality_input": "precomputed_imagenet_features_hdf5",
     }
 
 
@@ -345,7 +344,7 @@ def validate_result(
     patience: int = PATIENCE,
     expected_inputs: Optional[Mapping[str, Any]] = None,
     expected_revision: Optional[str] = None,
-    imagenet_workers: int = IMAGENET_WORKERS,
+    feature_workers: int = FEATURE_WORKERS,
 ) -> Dict[str, Any]:
     metadata_path = result_path(probing_base, spec)
     metadata = read_json(metadata_path)
@@ -355,7 +354,7 @@ def validate_result(
         spec,
         burnin,
         patience,
-        imagenet_workers,
+        feature_workers,
     ):
         raise SweepError(f"Training configuration mismatch in {metadata_path}")
     if expected_inputs is not None and metadata.get("inputs") != dict(expected_inputs):
@@ -474,35 +473,113 @@ def input_metadata(
     repo_root: Path,
     data_root: Path,
     features_path: Path,
-    imagenet_root: Path,
-    model_dict_path: Optional[Path],
+    imagenet_features_root: Path,
+    imagenet_manifest: Mapping[str, Any],
 ) -> Dict[str, Any]:
     paths = {
         "config": str(config_path),
         "repo_root": str(repo_root),
         "data_root": str(data_root),
         "features": str(features_path),
-        "imagenet_root": str(imagenet_root),
-        "model_dict": str(model_dict_path) if model_dict_path else None,
+        "imagenet_features_root": str(imagenet_features_root),
     }
     hashes = {
         "config": sha256(config_path),
         "features": sha256(features_path),
         "train_triplets": sha256(data_root / "triplets" / "train_90.npy"),
         "test_triplets": sha256(data_root / "triplets" / "test_10.npy"),
-        "main_glocal_probing": sha256(repo_root / "main_glocal_probing.py"),
+        "imagenet_manifest": sha256(imagenet_features_root / "manifest.json"),
+        "main_glocal_probing_efficient": sha256(
+            repo_root / "main_glocal_probing_efficient.py"
+        ),
         "glocal_transform_sweep": sha256(Path(__file__).resolve()),
     }
-    if model_dict_path is not None:
-        hashes["model_dict"] = sha256(model_dict_path)
     return {
-        "paths": {
-            **paths,
-        },
-        "sha256": {
-            **hashes,
-        },
+        "paths": paths,
+        "sha256": hashes,
+        "imagenet_features": imagenet_manifest["features"],
     }
+
+
+def validate_cached_feature_split(
+    path: Path,
+    recorded: Mapping[str, Any],
+    expected_dimension: int,
+) -> None:
+    """Validate cached feature structure without rehashing a multi-GB file."""
+    require_file(path, "Cached ImageNet feature file")
+    try:
+        with h5py.File(path, "r") as archive:
+            keys = list(archive.keys())
+            if len(keys) != 1 or not isinstance(archive[keys[0]], h5py.Dataset):
+                raise SweepError(f"Expected one root HDF5 dataset in {path}")
+            dataset = archive[keys[0]]
+            actual = {
+                "count": int(dataset.shape[0]) if dataset.ndim == 2 else -1,
+                "feature_dim": int(dataset.shape[1]) if dataset.ndim == 2 else -1,
+                "dtype": str(dataset.dtype),
+                "key": keys[0],
+                "bytes": path.stat().st_size,
+            }
+            if dataset.ndim != 2 or actual["count"] < 1:
+                raise SweepError(f"Expected a non-empty N × D matrix in {path}")
+            if actual["feature_dim"] != expected_dimension:
+                raise SweepError(
+                    f"Cached ImageNet dimension {actual['feature_dim']} does not "
+                    f"match THINGS dimension {expected_dimension}: {path}"
+                )
+            sample_indices = sorted({0, actual["count"] // 2, actual["count"] - 1})
+            if not np.isfinite(dataset[sample_indices]).all():
+                raise SweepError(f"Sampled non-finite cached features in {path}")
+    except (OSError, ValueError) as error:
+        raise SweepError(
+            f"Cannot read cached ImageNet features {path}: {error}"
+        ) from error
+    for key, value in actual.items():
+        if recorded.get(key) != value:
+            raise SweepError(
+                f"Cached ImageNet {key} mismatch for {path}: "
+                f"{recorded.get(key)!r} != {value!r}"
+            )
+    if not isinstance(recorded.get("sha256"), str):
+        raise SweepError(f"Cached ImageNet checksum is missing for {path}")
+
+
+def validate_cached_imagenet_features(
+    root: Path,
+    spec: TaskSpec,
+    expected_dimension: int,
+) -> Dict[str, Any]:
+    manifest_path = root / "manifest.json"
+    manifest = read_json(manifest_path)
+    configuration = manifest.get("configuration")
+    expected_identity = {
+        "model": spec.model,
+        "model_slug": spec.model_slug,
+        "source": spec.source,
+        "module": spec.module,
+        "module_name": spec.module_name,
+        "format": "hdf5",
+    }
+    if not isinstance(configuration, dict) or any(
+        configuration.get(key) != value for key, value in expected_identity.items()
+    ):
+        raise SweepError(f"Cached ImageNet configuration mismatch: {manifest_path}")
+    features = manifest.get("features")
+    if not isinstance(features, dict):
+        raise SweepError(
+            f"Cached ImageNet feature metadata is missing: {manifest_path}"
+        )
+    for split in ("train", "val"):
+        recorded = features.get(split)
+        if not isinstance(recorded, dict):
+            raise SweepError(f"Cached {split} metadata is missing: {manifest_path}")
+        validate_cached_feature_split(
+            root / split / "features.hdf5",
+            recorded,
+            expected_dimension,
+        )
+    return manifest
 
 
 def preflight(
@@ -515,9 +592,8 @@ def preflight(
     repo_root = args.repo_root.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve()
     features_path = args.features.expanduser().resolve()
-    imagenet_root = args.imagenet_root.expanduser().resolve()
-    model_dict_path = (
-        args.model_dict.expanduser().resolve() if args.model_dict else None
+    imagenet_features_root = (
+        args.imagenet_features_base.expanduser().resolve() / spec.model_slug
     )
     probing_base = args.probing_base.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
@@ -526,36 +602,19 @@ def preflight(
         (repo_root, "Repository root"),
         (data_root, "THINGS root"),
         (features_path, "THINGS features"),
-        (imagenet_root, "ImageNet root"),
+        (imagenet_features_root, "ImageNet features"),
         (probing_base, "Probing output root"),
     ):
         reject_placeholder(path, description)
-    if model_dict_path is not None:
-        reject_placeholder(model_dict_path, "Model dictionary")
 
-    require_file(repo_root / "main_glocal_probing.py", "Published gLocal entry point")
+    require_file(
+        repo_root / "main_glocal_probing_efficient.py",
+        "Published efficient gLocal entry point",
+    )
     require_file(config_path, "Sweep configuration")
     require_file(features_path, "THINGS features")
     validate_triplets(data_root / "triplets" / "train_90.npy", args.n_objects)
     validate_triplets(data_root / "triplets" / "test_10.npy", args.n_objects)
-    validate_imagenet_split(imagenet_root / "train_set")
-    validate_imagenet_split(imagenet_root / "val_set")
-
-    if model_dict_path is not None:
-        require_file(model_dict_path, "Model dictionary")
-        model_dictionary = read_json(model_dict_path)
-        try:
-            module_name = model_dictionary[spec.model][spec.module]["module_name"]
-        except (KeyError, TypeError) as error:
-            raise SweepError(
-                f"Model dictionary has no module_name for "
-                f"{spec.model}/{spec.module}: {model_dict_path}"
-            ) from error
-        if module_name != spec.module_name:
-            raise SweepError(
-                f"Model dictionary module_name for {spec.model}/{spec.module} is "
-                f"{module_name!r}, expected {spec.module_name!r}"
-            )
 
     try:
         with features_path.open("rb") as source:
@@ -584,21 +643,25 @@ def preflight(
     if not np.isfinite(feature_matrix).all():
         raise SweepError(f"THINGS features contain non-finite values: {spec.model}")
 
+    imagenet_manifest = validate_cached_imagenet_features(
+        imagenet_features_root,
+        spec,
+        feature_matrix.shape[1],
+    )
     check_writable(probing_base)
     metadata = input_metadata(
         config_path,
         repo_root,
         data_root,
         features_path,
-        imagenet_root,
-        model_dict_path,
+        imagenet_features_root,
+        imagenet_manifest,
     )
     return PreparedInputs(
         repo_root=repo_root,
         data_root=data_root,
         features_path=features_path,
-        imagenet_root=imagenet_root,
-        model_dict_path=model_dict_path,
+        imagenet_features_root=imagenet_features_root,
         probing_base=probing_base,
         feature_matrix=feature_matrix,
         input_metadata=metadata,
@@ -607,8 +670,8 @@ def preflight(
 
 
 def import_upstream(repo_root: Path) -> Any:
-    entrypoint = repo_root / "main_glocal_probing.py"
-    module_name = "_published_main_glocal_probing"
+    entrypoint = repo_root / "main_glocal_probing_efficient.py"
+    module_name = "_published_main_glocal_probing_efficient"
     spec = importlib.util.spec_from_file_location(module_name, entrypoint)
     if spec is None or spec.loader is None:
         raise SweepError(f"Cannot import published gLocal entry point: {entrypoint}")
@@ -620,122 +683,15 @@ def import_upstream(repo_root: Path) -> Any:
     return module
 
 
-def install_openclip_extractor_compat(upstream: Any) -> None:
-    """Allow the published raw runner to load OpenCLIP dataset names with underscores.
+def install_three_fold_compat(upstream: Any) -> None:
+    """Keep the raw wrapper's deterministic first three-way KFold split."""
+    published_kfold = upstream.KFold
 
-    ``main_glocal_probing.py`` unpacks an OpenCLIP model name into exactly three
-    underscore-separated tokens. The two published LAION identifiers have more
-    tokens, so the original loader raises before creating the extractor. Keep the
-    published loader for every other model and replace only this name parsing in
-    the imported module object.
-    """
+    def kfold(*args: Any, **kwargs: Any) -> Any:
+        kwargs["n_splits"] = N_SPLITS
+        return published_kfold(*args, **kwargs)
 
-    published_loader = upstream.load_extractor
-
-    def load_extractor(model_cfg: Mapping[str, str]) -> Any:
-        model_name = model_cfg["model"]
-        if not model_name.startswith("OpenCLIP"):
-            return published_loader(model_cfg)
-        tokens = model_name.split("_")
-        if len(tokens) < 3:
-            raise SweepError(f"Invalid OpenCLIP model identifier: {model_name}")
-        name, variant = tokens[:2]
-        data = "_".join(tokens[2:])
-        return upstream.get_extractor(
-            model_name=name,
-            source=model_cfg["source"],
-            device=model_cfg["device"],
-            pretrained=True,
-            model_parameters={"variant": variant, "dataset": data},
-        )
-
-    upstream.load_extractor = load_extractor
-
-
-def install_single_gpu_trainer_compat(upstream: Any) -> None:
-    """Prevent Lightning DDP from replacing the custom zipped-loader sampler.
-
-    The published raw runner requests ``strategy="ddp"`` even for a one-GPU
-    task. Lightning 1.8 then tries to wrap ``ZippedBatchLoader.sampler``, which
-    is intentionally ``None``, and fails before the sanity check. A one-GPU
-    task does not need DDP, so remove that strategy and sampler replacement in
-    the imported module object only.
-    """
-
-    published_trainer = upstream.Trainer
-
-    def trainer(*args: Any, **kwargs: Any) -> Any:
-        if kwargs.get("accelerator") == "gpu":
-            kwargs["strategy"] = None
-            kwargs["devices"] = 1
-            kwargs["replace_sampler_ddp"] = False
-            print(
-                "[gLocal wrapper] Using one GPU without DDP sampler replacement.",
-                flush=True,
-            )
-        return published_trainer(*args, **kwargs)
-
-    upstream.Trainer = trainer
-
-
-def install_teacher_feature_device_compat(upstream: Any) -> None:
-    """Move ThingsVision's extracted ImageNet features to the probe device.
-
-    With the repository's ThingsVision version, ``extract_features`` can return
-    a CPU tensor even when the extractor and Lightning module use CUDA. The
-    published probe then multiplies that tensor by its CUDA transform matrix.
-    Patch the imported probe class only, at the narrow normalization boundary,
-    so CPU and CUDA runs both use the device already selected by Lightning.
-    """
-
-    probe_class = upstream.utils.probing.GlocalProbe
-    published_normalize_features = probe_class.normalize_features
-
-    def normalize_features(self: Any, features: Any) -> Any:
-        features = features.to(self.transform_w.device)
-        return published_normalize_features(self, features)
-
-    probe_class.normalize_features = normalize_features
-    print(
-        "[gLocal wrapper] Aligning extracted ImageNet features with the probe device.",
-        flush=True,
-    )
-
-
-def install_imagenet_loader_memory_compat(
-    upstream: Any,
-    imagenet_workers: int,
-) -> None:
-    """Limit decoded ImageNet prefetching without changing training batches.
-
-    The published runner requests eight workers for both ImageNet loaders. Each
-    worker can prefetch multiple decoded 1,024-image batches, exhausting a
-    32-GiB SLURM cgroup. Keep the published batch size, shuffle, transforms, and
-    loss unchanged while capping only positive ImageNet loader worker counts.
-    """
-
-    published_get_batches = upstream.get_batches
-
-    def get_batches(
-        dataset: Any,
-        batch_size: int,
-        train: bool,
-        num_workers: int = 0,
-    ) -> Any:
-        if num_workers > 0:
-            num_workers = min(num_workers, imagenet_workers)
-        return published_get_batches(
-            dataset=dataset,
-            batch_size=batch_size,
-            train=train,
-            num_workers=num_workers,
-        )
-
-    upstream.get_batches = get_batches
-    print(
-        f"[gLocal wrapper] Using {imagenet_workers} ImageNet loader workers.",
-        flush=True,
-    )
+    upstream.KFold = kfold
 
 
 def finite_metric(results: Mapping[str, Any], source_name: str) -> float:
@@ -756,12 +712,9 @@ def execute_upstream(
     prepared: PreparedInputs,
     temporary: Path,
 ) -> tuple[Path, Dict[str, float]]:
-    """Call the published raw-image training function once for one parameter tuple."""
+    """Call the published cached-feature runner for one parameter tuple."""
     upstream = import_upstream(prepared.repo_root)
-    install_openclip_extractor_compat(upstream)
-    install_single_gpu_trainer_compat(upstream)
-    install_teacher_feature_device_compat(upstream)
-    install_imagenet_loader_memory_compat(upstream, args.imagenet_workers)
+    install_three_fold_compat(upstream)
     snapshot_dir = temporary / "snapshots"
     checkpoint_dir = temporary / "checkpoints"
     snapshot_dir.mkdir(parents=True)
@@ -778,9 +731,9 @@ def execute_upstream(
         model=spec.model,
         module=spec.module,
         sigma=float(SIGMA),
-        model_dict_path=str(prepared.model_dict_path),
         source=spec.source,
         device=args.device,
+        adversarial=False,
     )
     optim_cfg = upstream.create_optimization_config(
         args=upstream_args,
@@ -791,26 +744,17 @@ def execute_upstream(
         contrastive_batch_size=CONTRASTIVE_BATCH_SIZE,
         out_path=str(snapshot_dir),
     )
-    if prepared.model_dict_path is not None:
-        model_cfg = upstream.create_model_config(upstream_args)
-    else:
-        model_cfg = {
-            "model": spec.model,
-            "module": spec.module_name,
-            "source": spec.source,
-            "device": "cuda" if args.device == "gpu" else args.device,
-        }
     upstream.seed_everything(SEED, workers=True)
     _choices, results, transform, mean, std = upstream.run(
         features=prepared.feature_matrix,
-        imagenet_root=str(prepared.imagenet_root),
+        imagenet_features_root=str(prepared.imagenet_features_root),
         data_root=str(prepared.data_root),
-        model_cfg=model_cfg,
         optim_cfg=optim_cfg,
         n_objects=args.n_objects,
         device=args.device,
         rnd_seed=SEED,
-        num_processes=args.num_processes,
+        num_processes=args.feature_workers,
+        features_format="hdf5",
     )
     metrics = {
         "test_accuracy": finite_metric(results, "test_acc"),
@@ -828,7 +772,7 @@ def execute_upstream(
 
 def run_task(args: argparse.Namespace) -> int:
     validate_stop_policy(args.burnin, args.patience)
-    validate_imagenet_workers(args.imagenet_workers)
+    validate_feature_workers(args.feature_workers)
     models = load_models(args.config)
     spec = task_spec(models, args.task_id)
     prepared = preflight(args, models, spec)
@@ -841,7 +785,7 @@ def run_task(args: argparse.Namespace) -> int:
             args.patience,
             prepared.input_metadata,
             prepared.repo_revision,
-            args.imagenet_workers,
+            args.feature_workers,
         )
     except SweepError:
         pass
@@ -880,7 +824,7 @@ def run_task(args: argparse.Namespace) -> int:
                 spec,
                 args.burnin,
                 args.patience,
-                args.imagenet_workers,
+                args.feature_workers,
             ),
             "feature_dim": npz["feature_dim"],
             "inputs": prepared.input_metadata,
@@ -898,7 +842,7 @@ def run_task(args: argparse.Namespace) -> int:
             args.patience,
             prepared.input_metadata,
             prepared.repo_revision,
-            args.imagenet_workers,
+            args.feature_workers,
         )
         print(f"Published: {destination}")
     return 0
@@ -909,10 +853,10 @@ def validate_sweep(
     probing_base: Path,
     burnin: int = BURNIN,
     patience: int = PATIENCE,
-    imagenet_workers: int = IMAGENET_WORKERS,
+    feature_workers: int = FEATURE_WORKERS,
 ) -> int:
     validate_stop_policy(burnin, patience)
-    validate_imagenet_workers(imagenet_workers)
+    validate_feature_workers(feature_workers)
     models = load_models(config)
     probing_base = probing_base.expanduser().resolve()
     errors = []
@@ -923,7 +867,7 @@ def validate_sweep(
                 spec,
                 burnin,
                 patience,
-                imagenet_workers=imagenet_workers,
+                feature_workers=feature_workers,
             )
         except SweepError as error:
             errors.append(str(error))
@@ -955,21 +899,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--repo-root", type=Path, required=True)
     run_parser.add_argument("--data-root", type=Path, required=True)
     run_parser.add_argument("--features", type=Path, required=True)
-    run_parser.add_argument("--imagenet-root", type=Path, required=True)
-    run_parser.add_argument(
-        "--model-dict",
-        type=Path,
-        help="Optional external model dictionary; CLIP defaults to module 'visual'.",
-    )
+    run_parser.add_argument("--imagenet-features-base", type=Path, required=True)
     run_parser.add_argument("--probing-base", type=Path, required=True)
     run_parser.add_argument("--scratch-root", type=Path)
     run_parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")
-    run_parser.add_argument("--num-processes", type=int, default=4)
     run_parser.add_argument(
-        "--imagenet-workers",
+        "--feature-workers",
         type=int,
-        default=IMAGENET_WORKERS,
-        help="ImageNet DataLoader workers; lower this to reduce host RAM use.",
+        default=FEATURE_WORKERS,
+        help="Workers used to stream cached HDF5 feature batches.",
     )
     run_parser.add_argument("--n-objects", type=int, default=1854)
     run_parser.add_argument("--burnin", type=int, default=BURNIN)
@@ -983,9 +921,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--burnin", type=int, default=BURNIN)
     validate_parser.add_argument("--patience", type=int, default=PATIENCE)
     validate_parser.add_argument(
-        "--imagenet-workers",
+        "--feature-workers",
         type=int,
-        default=IMAGENET_WORKERS,
+        default=FEATURE_WORKERS,
     )
     return parser
 
@@ -1011,7 +949,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.probing_base,
             args.burnin,
             args.patience,
-            args.imagenet_workers,
+            args.feature_workers,
         )
     except SweepError as error:
         print(f"ERROR: {error}", file=sys.stderr)

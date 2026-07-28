@@ -1,7 +1,6 @@
-# gLocal transform parameter sweep
+# Efficient gLocal transform parameter sweep
 
-This wrapper trains one raw-ImageNet gLocal transform for every configured model
-and every combination of:
+The wrapper trains every configured model with:
 
 ```text
 lambda = 0.1, 0.001
@@ -9,41 +8,16 @@ alpha  = 0.05, 0.1, 0.25, 0.5
 tau    = 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0
 ```
 
-Learning rate is fixed at `0.001`. Training uses SGD with momentum, scaled-identity
-regularization, seed 42, no bias, and the first deterministic KFold partition used
-by `main_glocal_probing.py`. The published Python file is imported unchanged.
-The wrapper only corrects OpenCLIP dataset-name parsing in memory because the raw
-runner assumes dataset identifiers contain no underscores.
-For one-GPU SLURM tasks it also disables the published runner's forced DDP mode:
-Lightning 1.8 cannot replace the sampler of the repository's custom zipped loader,
-and DDP is unnecessary when each array task owns one GPU.
-The repository's ThingsVision version may return extracted ImageNet features on
-CPU even when the probe is on CUDA. The wrapper aligns that tensor with the
-probe's transform-matrix device immediately before normalization.
-The wrapper also limits ImageNet loading to two workers by default. This avoids
-prefetching many decoded 1,024-image batches into host RAM; the contrastive batch
-size and loss remain unchanged. The SLURM worker requests 64 GiB of host memory.
+Learning rate is fixed at `0.001`. Training uses SGD with momentum,
+scaled-identity regularization, seed 42, no bias, and the first deterministic
+three-way KFold partition. Published repository files remain unchanged.
 
-## Inputs
+The efficient repository path is used: ImageNet representations are extracted
+once per model and reused across all 56 parameter jobs. This removes repeated
+CLIP inference from every optimization step while retaining contrastive batch
+size 1,024.
 
-The ImageNet root must use the repository's expected layout:
-
-```text
-IMAGENET_ROOT/
-  train_set/<class>/<image>
-  val_set/<class>/<image>
-```
-
-The THINGS root needs `triplets/train_90.npy` and `triplets/test_10.npy`.
-`THINGS_FEATURES` defaults to `$THINGS_DATA_ROOT/features.pkl` and must contain
-each configured model at `features["custom"][model]["penultimate"]`.
-The CLIP configuration supplies the extractor module name (`visual`) directly, so
-an external model dictionary is not required. If `MODEL_DICT_PATH` is supplied,
-the wrapper validates that its module name agrees with the configuration.
-
-## Configure and submit
-
-Activate the prepared Conda environment and export the server paths:
+## Environment
 
 ```bash
 conda activate glocal_env
@@ -51,44 +25,96 @@ mkdir -p logs
 
 export PYTHON_BIN="$CONDA_PREFIX/bin/python"
 export THINGS_DATA_ROOT=/raid/home/barweiss/datasets/things-clip-training
-export IMAGENET_ROOT=/path/to/imagenet/2012
+export IMAGENET_ROOT=/raid/home/barweiss/datasets/imagenet-2012/glocal-layout
+export IMAGENET_FEATURES_BASE=/raid/home/barweiss/datasets/imagenet-clip-features
 export PROBING_BASE=/raid/home/barweiss/datasets/clip-transform-training
-
-scripts/submit_glocal_transforms.sh scripts/glocal_sweep.clip.json
 ```
 
-The example configuration contains four models and therefore submits 224 tasks.
-Remove model entries to run a subset; each model contributes 56 tasks. Concurrent
-jobs default to four and can be changed with `MAX_PARALLEL`.
-Set `IMAGENET_WORKERS` if a particular node needs a different loader setting.
+`IMAGENET_ROOT` is needed only during one-time feature extraction and must have:
 
-The submit helper accepts additional `sbatch` options:
-
-```bash
-scripts/submit_glocal_transforms.sh \
-  scripts/glocal_sweep.clip.json \
-  --dependency=afterok:<job-id>
+```text
+IMAGENET_ROOT/
+  train_set/<class>/<image>
+  val_set/<class>/<image>
 ```
 
-Inspect any task mapping without loading Torch or ImageNet:
+The THINGS root needs `triplets/train_90.npy`, `triplets/test_10.npy`, and
+`features.pkl`.
+
+## 1. Extract ImageNet features once
+
+Submit one task per model:
 
 ```bash
-"$PYTHON_BIN" scripts/glocal_transform_sweep.py describe \
+FEATURE_JOB="$(
+  bash scripts/submit_imagenet_clip_features.sh \
+    scripts/glocal_sweep.clip.json
+)"
+echo "$FEATURE_JOB"
+```
+
+Tasks run sequentially by default so this stage does not require extra
+concurrent GPUs. Each model is stored under:
+
+```text
+IMAGENET_FEATURES_BASE/<model>/
+  train/features.hdf5
+  val/features.hdf5
+  manifest.json
+```
+
+The default extraction batch is 128 with two loader workers. Override them when
+needed:
+
+```bash
+FEATURE_BATCH_SIZE=64 FEATURE_WORKERS=1 \
+  bash scripts/submit_imagenet_clip_features.sh \
+    scripts/glocal_sweep.clip.json
+```
+
+Validate completed caches:
+
+```bash
+"$PYTHON_BIN" scripts/precompute_imagenet_clip_features.py validate \
   --config scripts/glocal_sweep.clip.json \
-  --task-id 10
+  --repo-root "$PWD" \
+  --imagenet-root "$IMAGENET_ROOT" \
+  --output-root "$IMAGENET_FEATURES_BASE"
 ```
 
-Task 10 in the example is the requested CLIP-RN50 pilot with lambda `0.1`, alpha
-`0.1`, and tau `0.1`. Submit only that task with:
+## 2. Run the gLocal sweep
+
+After feature extraction succeeds, submit a pilot for task 10. In the example
+configuration this is CLIP-RN50 with lambda `0.1`, alpha `0.1`, and tau `0.1`:
 
 ```bash
-GLOCAL_ARRAY_OVERRIDE=10-10 \
-  scripts/submit_glocal_transforms.sh scripts/glocal_sweep.clip.json
+GLOCAL_ARRAY_OVERRIDE=10-10 MAX_PARALLEL=1 \
+  bash scripts/submit_glocal_transforms.sh \
+    scripts/glocal_sweep.clip.json
 ```
 
-Both the shell worker and Python runner require `PATIENCE >= BURNIN`. The default
-is 20 for both. This prevents Lightning 1.8 from repeatedly validating when early
-stopping is signaled before `min_epochs`.
+Then submit the complete configured sweep:
+
+```bash
+bash scripts/submit_glocal_transforms.sh \
+  scripts/glocal_sweep.clip.json
+```
+
+Alternatively, submit extraction and training together with a dependency:
+
+```bash
+FEATURE_JOB="$(
+  bash scripts/submit_imagenet_clip_features.sh \
+    scripts/glocal_sweep.clip.json
+)"
+bash scripts/submit_glocal_transforms.sh \
+  scripts/glocal_sweep.clip.json \
+  --dependency="afterok:$FEATURE_JOB"
+```
+
+Each model contributes 56 training tasks. `MAX_PARALLEL` controls concurrent
+training jobs; it defaults to four. Both the shell worker and Python runner
+require `PATIENCE >= BURNIN`, with 20 as the default for each.
 
 ## Outputs and resume
 
@@ -100,12 +126,11 @@ PROBING_BASE/selected/glocal/<model>/param_sweep/
   result_lambda_<lambda>_alpha_<alpha>_tau_<tau>.json
 ```
 
-Training and validation snapshots remain in temporary job storage. Canonical files
-are written only after the returned transform and metrics pass validation. A rerun
-skips only an NPZ/JSON pair whose configuration, inputs, repository revision,
-dimensions, and checksum still match.
+Feature extraction and training both use temporary directories. A rerun skips
+only validated canonical artifacts. Failed jobs do not publish partial
+transforms.
 
-Validate the complete configured sweep after the array finishes:
+Validate the configured transform sweep:
 
 ```bash
 "$PYTHON_BIN" scripts/glocal_transform_sweep.py validate \
@@ -113,5 +138,5 @@ Validate the complete configured sweep after the array finishes:
   --probing-base "$PROBING_BASE"
 ```
 
-No top-level selected gLocal transform is created. All parameter combinations are
-retained for the later representation-collection stage.
+No top-level selected gLocal transform is created because every parameter
+combination is retained for representation collection.

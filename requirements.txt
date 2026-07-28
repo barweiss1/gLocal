@@ -2,6 +2,7 @@ black
 einops
 flake8
 functorch
+h5py
 isort
 matplotlib
 ml_collections

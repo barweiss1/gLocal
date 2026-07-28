@@ -6,9 +6,9 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
+import h5py
 import numpy as np
 
 from scripts import glocal_transform_sweep as sweep
@@ -19,19 +19,7 @@ class FakeUpstream:
         self.run_calls = []
         self.optim_configs = []
         self.seed_calls = []
-        self.load_extractor = mock.Mock()
-        self.get_extractor = mock.Mock(return_value="extractor")
-        self.Trainer = mock.Mock(return_value="trainer")
-        self.get_batches = mock.Mock(return_value="batches")
-
-        class FakeProbe:
-            @staticmethod
-            def normalize_features(_self, features):
-                return features
-
-        self.utils = SimpleNamespace(
-            probing=SimpleNamespace(GlocalProbe=FakeProbe),
-        )
+        self.KFold = mock.Mock(return_value="kfold")
 
     def create_optimization_config(self, **kwargs):
         self.optim_configs.append(kwargs)
@@ -51,15 +39,6 @@ class FakeUpstream:
             "use_bias": args.use_bias,
             "sigma": args.sigma,
             "out_path": kwargs["out_path"],
-        }
-
-    @staticmethod
-    def create_model_config(args):
-        return {
-            "model": args.model,
-            "module": "visual",
-            "source": args.source,
-            "device": "cuda",
         }
 
     def seed_everything(self, seed, workers):
@@ -156,101 +135,18 @@ class GlocalTransformSweepTests(unittest.TestCase):
         with self.assertRaisesRegex(sweep.SweepError, "repeat validation indefinitely"):
             sweep.run_task(argparse.Namespace(burnin=20, patience=19))
 
-    def test_openclip_compat_preserves_complete_dataset_identifier(self) -> None:
+    def test_efficient_runner_preserves_three_way_fold(self) -> None:
         upstream = FakeUpstream()
-        published_loader = upstream.load_extractor
-        sweep.install_openclip_extractor_compat(upstream)
-        model_cfg = {
-            "model": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
-            "source": "custom",
-            "device": "cuda",
-        }
-        self.assertEqual(upstream.load_extractor(model_cfg), "extractor")
-        published_loader.assert_not_called()
-        upstream.get_extractor.assert_called_once_with(
-            model_name="OpenCLIP",
-            source="custom",
-            device="cuda",
-            pretrained=True,
-            model_parameters={
-                "variant": "ViT-L-14",
-                "dataset": "laion2b_s32b_b82k",
-            },
+        published_kfold = upstream.KFold
+        sweep.install_three_fold_compat(upstream)
+        self.assertEqual(
+            upstream.KFold(n_splits=4, random_state=42, shuffle=True),
+            "kfold",
         )
-
-        clip_cfg = {
-            "model": "clip_RN50",
-            "source": "custom",
-            "device": "cuda",
-        }
-        upstream.load_extractor(clip_cfg)
-        published_loader.assert_called_once_with(clip_cfg)
-
-    def test_single_gpu_compat_disables_ddp_sampler_replacement(self) -> None:
-        upstream = FakeUpstream()
-        published_trainer = upstream.Trainer
-        sweep.install_single_gpu_trainer_compat(upstream)
-        result = upstream.Trainer(
-            accelerator="gpu",
-            strategy="ddp",
-            devices="auto",
-            callbacks=[],
-        )
-        self.assertEqual(result, "trainer")
-        published_trainer.assert_called_once_with(
-            accelerator="gpu",
-            strategy=None,
-            devices=1,
-            callbacks=[],
-            replace_sampler_ddp=False,
-        )
-
-    def test_teacher_features_are_moved_to_probe_device(self) -> None:
-        class FakeTensor:
-            def __init__(self, device):
-                self.device = device
-                self.moves = []
-
-            def to(self, device):
-                self.moves.append(device)
-                self.device = device
-                return self
-
-        class FakeProbe:
-            def normalize_features(self, features):
-                return features.device
-
-        upstream = SimpleNamespace(
-            utils=SimpleNamespace(
-                probing=SimpleNamespace(GlocalProbe=FakeProbe),
-            )
-        )
-        sweep.install_teacher_feature_device_compat(upstream)
-        probe = FakeProbe()
-        probe.transform_w = FakeTensor("cuda:0")
-        features = FakeTensor("cpu")
-
-        self.assertEqual(probe.normalize_features(features), "cuda:0")
-        self.assertEqual(features.moves, ["cuda:0"])
-
-    def test_imagenet_loader_workers_are_capped_without_changing_batch(self) -> None:
-        upstream = FakeUpstream()
-        published_get_batches = upstream.get_batches
-        sweep.install_imagenet_loader_memory_compat(upstream, imagenet_workers=2)
-
-        result = upstream.get_batches(
-            dataset="imagenet",
-            batch_size=1024,
-            train=True,
-            num_workers=8,
-        )
-
-        self.assertEqual(result, "batches")
-        published_get_batches.assert_called_once_with(
-            dataset="imagenet",
-            batch_size=1024,
-            train=True,
-            num_workers=2,
+        published_kfold.assert_called_once_with(
+            n_splits=3,
+            random_state=42,
+            shuffle=True,
         )
 
     def make_run_fixture(self, root: Path) -> argparse.Namespace:
@@ -277,24 +173,38 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 output,
             )
 
-        imagenet_root = root / "imagenet"
-        for split in ("train_set", "val_set"):
-            class_root = imagenet_root / split / "class-a"
-            class_root.mkdir(parents=True)
-            (class_root / "image.jpg").write_bytes(b"fixture")
-
-        model_dict = root / "model_dict.json"
-        model_dict.write_text(
-            json.dumps(
-                {
-                    "clip_RN50": {
-                        "penultimate": {
-                            "module_name": "visual",
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
+        imagenet_features_base = root / "imagenet-features"
+        imagenet_model_root = imagenet_features_base / "clip_RN50"
+        split_metadata = {}
+        for split, count in (("train", 5), ("val", 3)):
+            feature_file = imagenet_model_root / split / "features.hdf5"
+            feature_file.parent.mkdir(parents=True)
+            with h5py.File(feature_file, "w") as archive:
+                archive.create_dataset(
+                    "features",
+                    data=np.ones((count, 2), dtype=np.float32),
+                )
+            split_metadata[split] = {
+                "count": count,
+                "feature_dim": 2,
+                "dtype": "float32",
+                "key": "features",
+                "bytes": feature_file.stat().st_size,
+                "sha256": "fixture-checksum",
+            }
+        sweep.atomic_json(
+            {
+                "configuration": {
+                    "model": "clip_RN50",
+                    "model_slug": "clip_RN50",
+                    "source": "custom",
+                    "module": "penultimate",
+                    "module_name": "visual",
+                    "format": "hdf5",
+                },
+                "features": split_metadata,
+            },
+            imagenet_model_root / "manifest.json",
         )
         repo_root = Path(__file__).resolve().parents[1]
         return argparse.Namespace(
@@ -303,13 +213,11 @@ class GlocalTransformSweepTests(unittest.TestCase):
             repo_root=repo_root,
             data_root=data_root,
             features=features_path,
-            imagenet_root=imagenet_root,
-            model_dict=None,
+            imagenet_features_base=imagenet_features_base,
             probing_base=root / "published",
             scratch_root=root / "scratch",
             device="gpu",
-            num_processes=4,
-            imagenet_workers=2,
+            feature_workers=2,
             n_objects=3,
             burnin=20,
             patience=20,
@@ -337,7 +245,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             models = sweep.load_models(args.config)
             spec = sweep.task_spec(models, 0)
             metadata = sweep.validate_result(args.probing_base, spec)
-            self.assertEqual(metadata["configuration"]["imagenet_workers"], 2)
+            self.assertEqual(metadata["configuration"]["feature_workers"], 2)
             self.assertEqual(metadata["configuration"]["optimizer"], "sgd")
             self.assertEqual(metadata["configuration"]["regularization"], "eye")
             self.assertEqual(metadata["configuration"]["module_name"], "visual")
@@ -346,12 +254,8 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 "first_deterministic_kfold_split",
             )
             self.assertEqual(
-                metadata["configuration"]["trainer_policy"],
-                "single_gpu_without_distributed_sampler_replacement",
-            )
-            self.assertEqual(
-                metadata["configuration"]["teacher_feature_device_policy"],
-                "probe_parameter_device",
+                metadata["configuration"]["locality_input"],
+                "precomputed_imagenet_features_hdf5",
             )
             self.assertEqual(metadata["metrics"]["test_accuracy"], 0.61)
 
@@ -382,34 +286,30 @@ class GlocalTransformSweepTests(unittest.TestCase):
             with self.assertRaisesRegex(sweep.SweepError, "Unexpected bias"):
                 sweep.validate_npz(transform)
 
-    def test_preflight_rejects_missing_imagenet_before_upstream_import(self) -> None:
+    def test_preflight_rejects_missing_cached_features_before_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             args = self.make_run_fixture(Path(directory))
-            missing = args.imagenet_root / "val_set" / "class-a" / "image.jpg"
+            missing = (
+                args.imagenet_features_base / "clip_RN50" / "val" / "features.hdf5"
+            )
             missing.unlink()
             with mock.patch.object(sweep, "import_upstream") as importer:
-                with self.assertRaisesRegex(sweep.SweepError, "no image files"):
+                with self.assertRaisesRegex(sweep.SweepError, "feature file"):
                     sweep.run_task(args)
                 importer.assert_not_called()
 
-    def test_optional_model_dictionary_must_agree_with_config(self) -> None:
+    def test_cached_feature_dimension_must_match_things(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             args = self.make_run_fixture(Path(directory))
-            model_dict = Path(directory) / "model_dict.json"
-            model_dict.write_text(
-                json.dumps(
-                    {
-                        "clip_RN50": {
-                            "penultimate": {
-                                "module_name": "wrong-layer",
-                            }
-                        }
-                    }
-                ),
-                encoding="utf-8",
+            feature_file = (
+                args.imagenet_features_base / "clip_RN50" / "train" / "features.hdf5"
             )
-            args.model_dict = model_dict
-            with self.assertRaisesRegex(sweep.SweepError, "expected 'visual'"):
+            with h5py.File(feature_file, "w") as archive:
+                archive.create_dataset(
+                    "features",
+                    data=np.ones((5, 3), dtype=np.float32),
+                )
+            with self.assertRaisesRegex(sweep.SweepError, "does not match THINGS"):
                 sweep.run_task(args)
 
 

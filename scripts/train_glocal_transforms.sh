@@ -5,7 +5,7 @@
 #SBATCH --partition=high
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --time=2-00:00:00
 
 set -euo pipefail
@@ -29,9 +29,9 @@ cd "$REPO_ROOT"
 
 : "${GLOCAL_SWEEP_CONFIG:?Set GLOCAL_SWEEP_CONFIG to the sweep JSON file}"
 : "${THINGS_DATA_ROOT:?Set THINGS_DATA_ROOT to the prepared THINGS directory}"
-: "${IMAGENET_ROOT:?Set IMAGENET_ROOT to the ImageNet directory}"
+: "${IMAGENET_FEATURES_BASE:?Set IMAGENET_FEATURES_BASE to cached features}"
 
-for value_name in THINGS_DATA_ROOT IMAGENET_ROOT; do
+for value_name in THINGS_DATA_ROOT IMAGENET_FEATURES_BASE; do
   value="${!value_name}"
   case "$value" in
     /path/to/*|/path/to)
@@ -40,13 +40,6 @@ for value_name in THINGS_DATA_ROOT IMAGENET_ROOT; do
       ;;
   esac
 done
-
-case "${MODEL_DICT_PATH:-}" in
-  /path/to/*|/path/to|/actual/path/to/*|/actual/path/to)
-    echo "Ignoring placeholder MODEL_DICT_PATH: $MODEL_DICT_PATH" >&2
-    unset MODEL_DICT_PATH
-    ;;
-esac
 
 THINGS_FEATURES="${THINGS_FEATURES:-$THINGS_DATA_ROOT/features.pkl}"
 PROBING_BASE="${PROBING_BASE:-$REPO_ROOT/glocal-transform-training}"
@@ -87,8 +80,7 @@ if (( PATIENCE < BURNIN )); then
   exit 1
 fi
 
-NUM_PROCESSES="${NUM_PROCESSES:-4}"
-IMAGENET_WORKERS="${IMAGENET_WORKERS:-2}"
+FEATURE_WORKERS="${FEATURE_WORKERS:-2}"
 N_OBJECTS="${N_OBJECTS:-1854}"
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
 
@@ -98,18 +90,13 @@ RUN_ARGS=(
   --repo-root "$REPO_ROOT"
   --data-root "$THINGS_DATA_ROOT"
   --features "$THINGS_FEATURES"
-  --imagenet-root "$IMAGENET_ROOT"
+  --imagenet-features-base "$IMAGENET_FEATURES_BASE"
   --probing-base "$PROBING_BASE"
   --scratch-root "$SCRATCH_ROOT"
   --device gpu
-  --num-processes "$NUM_PROCESSES"
-  --imagenet-workers "$IMAGENET_WORKERS"
+  --feature-workers "$FEATURE_WORKERS"
   --n-objects "$N_OBJECTS"
   --burnin "$BURNIN"
   --patience "$PATIENCE"
 )
-if [[ -n "${MODEL_DICT_PATH:-}" ]]; then
-  RUN_ARGS+=(--model-dict "$MODEL_DICT_PATH")
-fi
-
 "$PYTHON_BIN" scripts/glocal_transform_sweep.py run "${RUN_ARGS[@]}"
