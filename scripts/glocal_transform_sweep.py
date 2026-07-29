@@ -39,9 +39,9 @@ SIGMA = "0.001"
 TRIPLET_BATCH_SIZE = 256
 CONTRASTIVE_BATCH_SIZE = 1024
 FEATURE_WORKERS = 2
-MAX_EPOCHS = 100
+MAX_EPOCHS = 10
 BURNIN = 10
-PATIENCE = 5
+PATIENCE = 10
 SEED = 42
 N_SPLITS = 3
 SCHEMA_VERSION = 1
@@ -202,6 +202,8 @@ def validate_stop_policy(burnin: int, patience: int) -> None:
     """Prevent the Lightning 1.8 pre-min-epochs validation loop."""
     if burnin < 0 or patience < 0:
         raise SweepError("Burn-in and patience must be non-negative")
+    if burnin > MAX_EPOCHS:
+        raise SweepError(f"burn-in ({burnin}) cannot exceed max epochs ({MAX_EPOCHS})")
     if patience < burnin:
         raise SweepError(
             f"patience ({patience}) must be greater than or equal to burn-in "

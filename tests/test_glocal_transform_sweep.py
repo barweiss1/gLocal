@@ -65,7 +65,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
         path.write_text(json.dumps({"models": models}), encoding="utf-8")
         return path
 
-    def test_task_mapping_has_56_stable_combinations_per_model(self) -> None:
+    def test_task_mapping_has_32_stable_combinations_per_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = self.write_config(
@@ -77,8 +77,8 @@ class GlocalTransformSweepTests(unittest.TestCase):
             )
             models = sweep.load_models(config)
             specs = list(sweep.all_specs(models))
-            self.assertEqual(sweep.task_count(models), 112)
-            self.assertEqual(len(specs), 112)
+            self.assertEqual(sweep.task_count(models), 64)
+            self.assertEqual(len(specs), 64)
             combinations = {
                 (
                     spec.model,
@@ -88,13 +88,13 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 )
                 for spec in specs
             }
-            self.assertEqual(len(combinations), 112)
+            self.assertEqual(len(combinations), 64)
             self.assertEqual(sweep.task_spec(models, 10).model, "clip_RN50")
             self.assertEqual(sweep.task_spec(models, 10).lambda_label, "0.1")
-            self.assertEqual(sweep.task_spec(models, 10).alpha_label, "0.1")
-            self.assertEqual(sweep.task_spec(models, 10).tau_label, "0.1")
-            with self.assertRaisesRegex(sweep.SweepError, r"\[0, 111\]"):
-                sweep.task_spec(models, 112)
+            self.assertEqual(sweep.task_spec(models, 10).alpha_label, "0.5")
+            self.assertEqual(sweep.task_spec(models, 10).tau_label, "0.5")
+            with self.assertRaisesRegex(sweep.SweepError, r"\[0, 63\]"):
+                sweep.task_spec(models, 64)
 
     def test_config_supports_model_subset_and_rejects_unsafe_slugs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -102,7 +102,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             config = self.write_config(root, ["clip_ViT-L/14"])
             models = sweep.load_models(config)
             self.assertEqual(models[0].slug, "clip_ViT-L-14")
-            self.assertEqual(sweep.task_count(models), 56)
+            self.assertEqual(sweep.task_count(models), 32)
 
             invalid = self.write_config(
                 root,
@@ -131,9 +131,11 @@ class GlocalTransformSweepTests(unittest.TestCase):
         )
 
     def test_stop_policy_fails_before_any_input_access(self) -> None:
-        sweep.validate_stop_policy(20, 20)
+        sweep.validate_stop_policy(10, 10)
         with self.assertRaisesRegex(sweep.SweepError, "repeat validation indefinitely"):
-            sweep.run_task(argparse.Namespace(burnin=20, patience=19))
+            sweep.run_task(argparse.Namespace(burnin=10, patience=9))
+        with self.assertRaisesRegex(sweep.SweepError, "cannot exceed max epochs"):
+            sweep.validate_stop_policy(11, 11)
 
     def test_efficient_runner_preserves_three_way_fold(self) -> None:
         upstream = FakeUpstream()
@@ -219,8 +221,8 @@ class GlocalTransformSweepTests(unittest.TestCase):
             device="gpu",
             feature_workers=2,
             n_objects=3,
-            burnin=20,
-            patience=20,
+            burnin=10,
+            patience=10,
         )
 
     def test_run_publishes_and_then_resumes_exact_artifact(self) -> None:
@@ -237,8 +239,8 @@ class GlocalTransformSweepTests(unittest.TestCase):
             optim_call = upstream.optim_configs[0]
             self.assertEqual(optim_call["eta"], 0.001)
             self.assertEqual(optim_call["lmbda"], 0.1)
-            self.assertEqual(optim_call["alpha"], 0.05)
-            self.assertEqual(optim_call["tau"], 0.01)
+            self.assertEqual(optim_call["alpha"], 0.1)
+            self.assertEqual(optim_call["tau"], 0.1)
             self.assertEqual(optim_call["contrastive_batch_size"], 1024)
             self.assertEqual(upstream.run_calls[0]["rnd_seed"], 42)
 
@@ -246,6 +248,9 @@ class GlocalTransformSweepTests(unittest.TestCase):
             spec = sweep.task_spec(models, 0)
             metadata = sweep.validate_result(args.probing_base, spec)
             self.assertEqual(metadata["configuration"]["feature_workers"], 2)
+            self.assertEqual(metadata["configuration"]["max_epochs"], 10)
+            self.assertEqual(metadata["configuration"]["burnin"], 10)
+            self.assertEqual(metadata["configuration"]["patience"], 10)
             self.assertEqual(metadata["configuration"]["optimizer"], "sgd")
             self.assertEqual(metadata["configuration"]["regularization"], "eye")
             self.assertEqual(metadata["configuration"]["module_name"], "visual")

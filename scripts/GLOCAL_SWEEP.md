@@ -4,8 +4,8 @@ The wrapper trains every configured model with:
 
 ```text
 lambda = 0.1, 0.001
-alpha  = 0.05, 0.1, 0.25, 0.5
-tau    = 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0
+alpha  = 0.1, 0.25, 0.5, 0.75
+tau    = 0.1, 0.25, 0.5, 1.0
 ```
 
 Learning rate is fixed at `0.001`. Training uses SGD with momentum,
@@ -13,7 +13,7 @@ scaled-identity regularization, seed 42, no bias, and the first deterministic
 three-way KFold partition. Published repository files remain unchanged.
 
 The efficient repository path is used: ImageNet representations are extracted
-once per model and reused across all 56 parameter jobs. This removes repeated
+once per model and reused across all 32 parameter jobs. This removes repeated
 CLIP inference from every optimization step while retaining contrastive batch
 size 1,024.
 
@@ -84,11 +84,11 @@ Validate completed caches:
 
 ## 2. Run the gLocal sweep
 
-After feature extraction succeeds, submit a pilot for task 10. In the example
+After feature extraction succeeds, submit a pilot for task 0. In the example
 configuration this is CLIP-RN50 with lambda `0.1`, alpha `0.1`, and tau `0.1`:
 
 ```bash
-GLOCAL_ARRAY_OVERRIDE=10-10 MAX_PARALLEL=1 \
+GLOCAL_ARRAY_OVERRIDE=0-0 MAX_PARALLEL=1 \
   bash scripts/submit_glocal_transforms.sh \
     scripts/glocal_sweep.clip.json
 ```
@@ -112,9 +112,10 @@ bash scripts/submit_glocal_transforms.sh \
   --dependency="afterok:$FEATURE_JOB"
 ```
 
-Each model contributes 56 training tasks. `MAX_PARALLEL` controls concurrent
+Each model contributes 32 training tasks. `MAX_PARALLEL` controls concurrent
 training jobs; it defaults to four. Both the shell worker and Python runner
-require `PATIENCE >= BURNIN`, with 20 as the default for each.
+limit training to 10 epochs and require `PATIENCE >= BURNIN`; both default to
+10.
 
 ## Outputs and resume
 

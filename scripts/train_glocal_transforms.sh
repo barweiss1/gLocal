@@ -72,8 +72,13 @@ if (( TASK_ID < 0 || TASK_ID >= TASK_COUNT )); then
   exit 1
 fi
 
-BURNIN="${BURNIN:-20}"
-PATIENCE="${PATIENCE:-20}"
+MAX_EPOCHS=10
+BURNIN="${BURNIN:-10}"
+PATIENCE="${PATIENCE:-10}"
+if (( BURNIN > MAX_EPOCHS )); then
+  echo "BURNIN ($BURNIN) cannot exceed maximum epochs ($MAX_EPOCHS)." >&2
+  exit 1
+fi
 if (( PATIENCE < BURNIN )); then
   echo "PATIENCE ($PATIENCE) must be greater than or equal to BURNIN ($BURNIN)." >&2
   echo "Lightning 1.8 can repeat validation indefinitely before min_epochs." >&2
