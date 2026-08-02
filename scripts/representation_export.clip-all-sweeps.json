@@ -1,0 +1,72 @@
+{
+  "features_root": "../features-export-all-sweeps",
+  "device": "cuda",
+  "logical_batch_size": 1024,
+  "compute_batch_size": 32,
+  "num_workers": 2,
+  "allow_download": true,
+  "transform_validation": "all_sweeps",
+  "glocal_sweep_config": "glocal_sweep.clip.json",
+  "transform_variants": {
+    "none": {
+      "kind": "none"
+    }
+  },
+  "transform_grids": [
+    {
+      "kind": "naive",
+      "name_template": "naive-lambda-{lambda}",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz",
+      "parameters": {
+        "lambda": ["0.01", "0.1", "1.0", "10.0"]
+      }
+    },
+    {
+      "kind": "global",
+      "name_template": "global-lambda-{lambda}",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}.npz",
+      "parameters": {
+        "lambda": ["0.01", "0.1", "1.0", "10.0"]
+      }
+    },
+    {
+      "kind": "glocal",
+      "name_template": "glocal-lambda-{lambda}-alpha-{alpha}-tau-{tau}",
+      "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}_alpha_{alpha}_tau_{tau}.npz",
+      "parameters": {
+        "lambda": ["0.1", "0.001"],
+        "alpha": ["0.1", "0.25", "0.5", "0.75"],
+        "tau": ["0.1", "0.25", "0.5", "1.0"]
+      }
+    }
+  ],
+  "models": [
+    {
+      "name": "clip_RN50",
+      "source": "custom",
+      "layer": "visual"
+    },
+    {
+      "name": "OpenCLIP_ViT-L-14_laion2b_s32b_b82k",
+      "source": "custom",
+      "layer": "visual"
+    }
+  ],
+  "datasets": [
+    {
+      "name": "cifar10",
+      "root": "../datasets",
+      "splits": ["test"]
+    },
+    {
+      "name": "cifar100",
+      "root": "../datasets",
+      "splits": ["test"]
+    },
+    {
+      "name": "cifar100-coarse",
+      "root": "../datasets",
+      "splits": ["test"]
+    }
+  ]
+}

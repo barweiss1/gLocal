@@ -23,6 +23,28 @@ class FakeExtractor:
 
 
 class CollectRepresentationsTests(unittest.TestCase):
+    def test_combined_sweep_config_expands_all_glocal_variants(self):
+        probing_root = Path("/tmp/example-probing-root").resolve()
+        with patch.dict(os.environ, {"PROBING_BASE": str(probing_root)}):
+            config = collect.load_config(
+                Path("scripts/representation_export.clip-all-sweeps.json"),
+                selected_models=["clip_RN50"],
+                selected_datasets=["cifar100"],
+            )
+
+        self.assertEqual(len(config["transforms"]), 41)
+        variant = "glocal-lambda-0.001-alpha-0.75-tau-1.0"
+        self.assertEqual(config["transform_specs"][variant]["kind"], "glocal")
+        self.assertEqual(
+            config["models"][0][f"{variant}_transform"],
+            probing_root
+            / "selected"
+            / "glocal"
+            / "clip_RN50"
+            / "param_sweep"
+            / "transform_lambda_0.001_alpha_0.75_tau_1.0.npz",
+        )
+
     def test_parameter_sweep_config_resolves_named_variants(self):
         probing_root = Path("/tmp/example-probing-root").resolve()
         with patch.dict(os.environ, {"PROBING_BASE": str(probing_root)}):
@@ -33,9 +55,7 @@ class CollectRepresentationsTests(unittest.TestCase):
             )
 
         self.assertEqual(len(config["transforms"]), 9)
-        self.assertEqual(
-            config["transform_specs"]["naive-lambda-0.1"]["kind"], "naive"
-        )
+        self.assertEqual(config["transform_specs"]["naive-lambda-0.1"]["kind"], "naive")
         self.assertEqual(
             config["transform_specs"]["global-lambda-10.0"]["kind"], "global"
         )

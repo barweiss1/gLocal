@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -105,6 +106,53 @@ def load_config(
                 )
             variant_specs[name] = spec
 
+    for grid_index, grid in enumerate(config.get("transform_grids", [])):
+        if not isinstance(grid, dict):
+            raise ExportError(f"transform_grids[{grid_index}] must be an object")
+        kind = grid.get("kind")
+        name_template = grid.get("name_template")
+        path_template = grid.get("path_template")
+        parameters = grid.get("parameters")
+        if kind not in TRANSFORMS or kind == "none":
+            raise ExportError(
+                f"transform_grids[{grid_index}] has unsupported kind {kind!r}"
+            )
+        if not isinstance(name_template, str) or not isinstance(path_template, str):
+            raise ExportError(
+                f"transform_grids[{grid_index}] needs string name/path templates"
+            )
+        if not isinstance(parameters, dict) or not parameters:
+            raise ExportError(
+                f"transform_grids[{grid_index}].parameters must be non-empty"
+            )
+        parameter_names = list(parameters)
+        parameter_values = []
+        for parameter in parameter_names:
+            values = parameters[parameter]
+            if not isinstance(values, list) or not values:
+                raise ExportError(
+                    f"transform_grids[{grid_index}].parameters[{parameter!r}] "
+                    "must be a non-empty list"
+                )
+            parameter_values.append([str(value) for value in values])
+        for values in itertools.product(*parameter_values):
+            combination = dict(zip(parameter_names, values))
+            try:
+                name = name_template.format_map(combination)
+            except KeyError as exc:
+                raise ExportError(
+                    f"Unknown placeholder {exc} in transform grid name"
+                ) from exc
+            if slug(name) != name:
+                raise ExportError(f"Transform variant is not filesystem-safe: {name}")
+            if name in variant_specs:
+                raise ExportError(f"Duplicate transform variant: {name}")
+            variant_specs[name] = {
+                "kind": kind,
+                "path_template": path_template,
+                **combination,
+            }
+
     transforms = list(selected_transforms or config.get("transforms", variant_specs))
     invalid_transforms = sorted(set(transforms) - set(variant_specs))
     if invalid_transforms:
@@ -131,7 +179,10 @@ def load_config(
                 continue
             key = f"{variant}_transform"
             configured_path = configured_paths.get(variant)
-            if configured_path is None and "path_template" in config["transform_specs"][variant]:
+            if (
+                configured_path is None
+                and "path_template" in config["transform_specs"][variant]
+            ):
                 template = config["transform_specs"][variant]["path_template"]
                 if not isinstance(template, str):
                     raise ExportError(f"path_template for {variant} must be a string")
@@ -342,7 +393,7 @@ def apply_transform(features: np.ndarray, transform: Mapping[str, Any]) -> np.nd
 
 def make_dataset(spec: Mapping[str, Any], split: str, transform: Any) -> Any:
     """Construct one supported torchvision dataset split in canonical order."""
-    from torchvision.datasets import CIFAR10, CIFAR100, DTD, ImageNet, SUN397
+    from torchvision.datasets import CIFAR10, CIFAR100, DTD, SUN397, ImageNet
 
     from data.cifar import CIFAR100Coarse
 
@@ -442,6 +493,7 @@ def ensure_catalog(
 def load_extractor(model: Mapping[str, Any], device: str) -> Any:
     """Create the pretrained ThingsVision extractor described by a model spec."""
     from thingsvision import get_extractor
+
     from utils.probing.helpers import model_name_to_thingsvision
 
     name, parameters = model_name_to_thingsvision(model["name"])
@@ -616,9 +668,7 @@ def extract(config: Mapping[str, Any]) -> None:
                     for kind in config["transforms"]:
                         is_none = config["transform_specs"][kind]["kind"] == "none"
                         variants[kind] = (
-                            raw
-                            if is_none
-                            else apply_transform(raw, transforms[kind])
+                            raw if is_none else apply_transform(raw, transforms[kind])
                         )
                     for kind, features in variants.items():
                         is_none = config["transform_specs"][kind]["kind"] == "none"

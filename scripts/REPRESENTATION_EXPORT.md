@@ -198,6 +198,35 @@ The command is resumable and the configuration can be narrowed with repeated
 `--model`, `--dataset`, or `--transform` arguments. For example,
 `--transform none --transform global-lambda-0.1` exports only those two variants.
 
+### Collect naive, global, and gLocal parameter sweeps
+
+The combined configuration covers the two models in `glocal_sweep.clip.json` and
+exports 41 variants per model: `none`, four naive lambdas, four global lambdas,
+and all 32 gLocal `(lambda, alpha, tau)` combinations:
+
+```bash
+conda activate glocal_env
+export PYTHON_BIN="$CONDA_PREFIX/bin/python"
+export PROBING_BASE=/raid/home/barweiss/datasets/clip-transform-training
+export CONFIG_PATH=scripts/representation_export.clip-all-sweeps.json
+mkdir -p logs
+
+sbatch --export=ALL \
+  scripts/collect_all_clip_representations.sh
+```
+
+To collect only CIFAR-100:
+
+```bash
+sbatch --export=ALL \
+  scripts/collect_all_clip_representations.sh \
+  --dataset cifar100
+```
+
+Outputs are written to `features-export-all-sweeps`. The collection wrapper
+validates both the naive/global sweep and the configured gLocal sweep before
+loading a model. CIFAR data downloads automatically on the first run.
+
 The CIFAR `-shift`, `-rvo`, and `cifar10vs100` variants are AD evaluation protocols
 derived from these image sets, not additional representation-extraction datasets.
 

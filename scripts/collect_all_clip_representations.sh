@@ -112,6 +112,18 @@ case "$VALIDATION_MODE" in
     "$PYTHON_BIN" scripts/clip_transform_sweep.py validate-sweep \
       --probing-base "$PROBING_BASE"
     ;;
+  all_sweeps)
+    "$PYTHON_BIN" scripts/clip_transform_sweep.py validate-sweep \
+      --probing-base "$PROBING_BASE"
+    GLOCAL_SWEEP_CONFIG_PATH="$(
+      "$PYTHON_BIN" -c \
+        'import json, pathlib, sys; p=pathlib.Path(sys.argv[1]).resolve(); print((p.parent / json.load(p.open())["glocal_sweep_config"]).resolve())' \
+        "$CONFIG_PATH"
+    )"
+    "$PYTHON_BIN" scripts/glocal_transform_sweep.py validate \
+      --config "$GLOCAL_SWEEP_CONFIG_PATH" \
+      --probing-base "$PROBING_BASE"
+    ;;
   config)
     ;;
   *)
