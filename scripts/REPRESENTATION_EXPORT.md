@@ -227,6 +227,25 @@ Outputs are written to `features-export-all-sweeps`. The collection wrapper
 validates both the naive/global sweep and the configured gLocal sweep before
 loading a model. CIFAR data downloads automatically on the first run.
 
+To use four GPUs, run the four-way submit helper instead. It prepares the shared
+CIFAR catalogs first, then submits one CLIP-RN50 job for all datasets and three
+OpenCLIP jobs (one per dataset):
+
+```bash
+bash scripts/submit_clip_representations_4way.sh
+```
+
+Optional `sbatch` flags are forwarded to all four jobs:
+
+```bash
+bash scripts/submit_clip_representations_4way.sh \
+  --partition=high \
+  --time=2-00:00:00
+```
+
+Sharding is by model/dataset rather than transform, so each job still computes
+raw model features only once and derives all 41 variants from them.
+
 The CIFAR `-shift`, `-rvo`, and `cifar10vs100` variants are AD evaluation protocols
 derived from these image sets, not additional representation-extraction datasets.
 

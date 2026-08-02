@@ -731,6 +731,14 @@ def extract(config: Mapping[str, Any]) -> None:
         del extractor
 
 
+def prepare_catalogs(config: Mapping[str, Any]) -> None:
+    """Download configured datasets and publish their canonical sample indexes."""
+    for dataset in config["datasets"]:
+        for split in dataset["splits"]:
+            ensure_catalog(config, dataset, split)
+            print(f"Prepared catalog: {dataset['name']}:{split}")
+
+
 def attach_performance(config: Mapping[str, Any], performance_path: Path) -> None:
     """Attach user-produced AD/FS summaries to batches and transform metadata."""
     with performance_path.open("r", encoding="utf-8") as handle:
@@ -813,7 +821,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument(
         "--stage",
-        choices=("extract", "attach-performance", "validate"),
+        choices=("prepare-catalogs", "extract", "attach-performance", "validate"),
         default="extract",
     )
     parser.add_argument("--performance", type=Path)
@@ -833,7 +841,9 @@ def main() -> int:
     args = parse_args()
     try:
         config = load_config(args.config, args.models, args.datasets, args.transforms)
-        if args.stage == "extract":
+        if args.stage == "prepare-catalogs":
+            prepare_catalogs(config)
+        elif args.stage == "extract":
             extract(config)
         elif args.stage == "attach-performance":
             if args.performance is None:

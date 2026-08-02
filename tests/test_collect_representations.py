@@ -23,6 +23,20 @@ class FakeExtractor:
 
 
 class CollectRepresentationsTests(unittest.TestCase):
+    def test_prepare_catalogs_prepares_every_dataset_split(self):
+        config = {
+            "datasets": [
+                {"name": "cifar10", "splits": ["test"]},
+                {"name": "cifar100", "splits": ["train", "test"]},
+            ]
+        }
+        with patch.object(collect, "ensure_catalog") as ensure:
+            collect.prepare_catalogs(config)
+        self.assertEqual(
+            [call.args[2] for call in ensure.call_args_list],
+            ["test", "train", "test"],
+        )
+
     def test_combined_sweep_config_expands_all_glocal_variants(self):
         probing_root = Path("/tmp/example-probing-root").resolve()
         with patch.dict(os.environ, {"PROBING_BASE": str(probing_root)}):
