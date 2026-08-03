@@ -29,7 +29,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 import h5py
 import numpy as np
 
-LAMBDAS = ("0.1", "0.001")
+LAMBDAS = ("0.1", "0.001", "0.01", "1.0")
 ALPHAS = ("0.1", "0.25", "0.5", "0.75")
 TAUS = ("0.1", "0.25", "0.5", "1.0")
 LEARNING_RATE = "0.001"

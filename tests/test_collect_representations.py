@@ -46,8 +46,8 @@ class CollectRepresentationsTests(unittest.TestCase):
                 selected_datasets=["cifar100"],
             )
 
-        self.assertEqual(len(config["transforms"]), 41)
-        variant = "glocal-lambda-0.001-alpha-0.75-tau-1.0"
+        self.assertEqual(len(config["transforms"]), 73)
+        variant = "glocal-lambda-1.0-alpha-0.75-tau-1.0"
         self.assertEqual(config["transform_specs"][variant]["kind"], "glocal")
         self.assertEqual(
             config["models"][0][f"{variant}_transform"],
@@ -56,7 +56,7 @@ class CollectRepresentationsTests(unittest.TestCase):
             / "glocal"
             / "clip_RN50"
             / "param_sweep"
-            / "transform_lambda_0.001_alpha_0.75_tau_1.0.npz",
+            / "transform_lambda_1.0_alpha_0.75_tau_1.0.npz",
         )
 
     def test_parameter_sweep_config_resolves_named_variants(self):

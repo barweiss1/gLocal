@@ -34,7 +34,7 @@
       "name_template": "glocal-lambda-{lambda}-alpha-{alpha}-tau-{tau}",
       "path_template": "$PROBING_BASE/selected/{kind}/{model_slug}/param_sweep/transform_lambda_{lambda}_alpha_{alpha}_tau_{tau}.npz",
       "parameters": {
-        "lambda": ["0.1", "0.001"],
+        "lambda": ["0.1", "0.001", "0.01", "1.0"],
         "alpha": ["0.1", "0.25", "0.5", "0.75"],
         "tau": ["0.1", "0.25", "0.5", "1.0"]
       }

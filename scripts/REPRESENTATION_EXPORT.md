@@ -201,8 +201,8 @@ The command is resumable and the configuration can be narrowed with repeated
 ### Collect naive, global, and gLocal parameter sweeps
 
 The combined configuration covers the two models in `glocal_sweep.clip.json` and
-exports 41 variants per model: `none`, four naive lambdas, four global lambdas,
-and all 32 gLocal `(lambda, alpha, tau)` combinations:
+exports 73 variants per model: `none`, four naive lambdas, four global lambdas,
+and all 64 gLocal `(lambda, alpha, tau)` combinations:
 
 ```bash
 conda activate glocal_env
@@ -244,7 +244,7 @@ bash scripts/submit_clip_representations_4way.sh \
 ```
 
 Sharding is by model/dataset rather than transform, so each job still computes
-raw model features only once and derives all 41 variants from them.
+raw model features only once and derives all 73 variants from them.
 
 The CIFAR `-shift`, `-rvo`, and `cifar10vs100` variants are AD evaluation protocols
 derived from these image sets, not additional representation-extraction datasets.

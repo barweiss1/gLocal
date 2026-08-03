@@ -3,7 +3,7 @@
 The wrapper trains every configured model with:
 
 ```text
-lambda = 0.1, 0.001
+lambda = 0.1, 0.001, 0.01, 1.0
 alpha  = 0.1, 0.25, 0.5, 0.75
 tau    = 0.1, 0.25, 0.5, 1.0
 ```
@@ -13,7 +13,7 @@ scaled-identity regularization, seed 42, no bias, and the first deterministic
 three-way KFold partition. Published repository files remain unchanged.
 
 The efficient repository path is used: ImageNet representations are extracted
-once per model and reused across all 32 parameter jobs. This removes repeated
+once per model and reused across all 64 parameter jobs. This removes repeated
 CLIP inference from every optimization step while retaining contrastive batch
 size 1,024.
 
@@ -112,10 +112,10 @@ bash scripts/submit_glocal_transforms.sh \
   --dependency="afterok:$FEATURE_JOB"
 ```
 
-Each model contributes 32 training tasks. `MAX_PARALLEL` controls concurrent
-training jobs; it defaults to four. Both the shell worker and Python runner
-limit training to 10 epochs and require `PATIENCE >= BURNIN`; both default to
-10.
+Each model contributes 64 training tasks, so the checked-in two-model config
+submits 128 tasks. `MAX_PARALLEL` controls concurrent training jobs; it defaults
+to four. Both the shell worker and Python runner limit training to 10 epochs and
+require `PATIENCE >= BURNIN`; both default to 10.
 
 ## Outputs and resume
 

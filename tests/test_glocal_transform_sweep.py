@@ -65,7 +65,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
         path.write_text(json.dumps({"models": models}), encoding="utf-8")
         return path
 
-    def test_task_mapping_has_32_stable_combinations_per_model(self) -> None:
+    def test_task_mapping_has_64_stable_combinations_per_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = self.write_config(
@@ -77,8 +77,8 @@ class GlocalTransformSweepTests(unittest.TestCase):
             )
             models = sweep.load_models(config)
             specs = list(sweep.all_specs(models))
-            self.assertEqual(sweep.task_count(models), 64)
-            self.assertEqual(len(specs), 64)
+            self.assertEqual(sweep.task_count(models), 128)
+            self.assertEqual(len(specs), 128)
             combinations = {
                 (
                     spec.model,
@@ -88,13 +88,15 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 )
                 for spec in specs
             }
-            self.assertEqual(len(combinations), 64)
+            self.assertEqual(len(combinations), 128)
             self.assertEqual(sweep.task_spec(models, 10).model, "clip_RN50")
             self.assertEqual(sweep.task_spec(models, 10).lambda_label, "0.1")
             self.assertEqual(sweep.task_spec(models, 10).alpha_label, "0.5")
             self.assertEqual(sweep.task_spec(models, 10).tau_label, "0.5")
-            with self.assertRaisesRegex(sweep.SweepError, r"\[0, 63\]"):
-                sweep.task_spec(models, 64)
+            self.assertEqual(sweep.task_spec(models, 32).lambda_label, "0.01")
+            self.assertEqual(sweep.task_spec(models, 48).lambda_label, "1.0")
+            with self.assertRaisesRegex(sweep.SweepError, r"\[0, 127\]"):
+                sweep.task_spec(models, 128)
 
     def test_config_supports_model_subset_and_rejects_unsafe_slugs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -102,7 +104,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             config = self.write_config(root, ["clip_ViT-L/14"])
             models = sweep.load_models(config)
             self.assertEqual(models[0].slug, "clip_ViT-L-14")
-            self.assertEqual(sweep.task_count(models), 32)
+            self.assertEqual(sweep.task_count(models), 64)
 
             invalid = self.write_config(
                 root,
