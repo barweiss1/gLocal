@@ -334,13 +334,19 @@ def run_task(args: argparse.Namespace) -> int:
         if not path.is_file():
             raise SweepError(f"Required input is missing: {path}")
 
-    try:
-        existing = validate_result(probing_base, spec)
-    except SweepError:
-        existing = None
-    if existing is not None:
-        print(f"Validated existing artifact; skipping task {spec.task_id}: {transform_path(probing_base, spec)}")
-        return 0
+    if not args.overwrite:
+        try:
+            existing = validate_result(probing_base, spec)
+        except SweepError:
+            existing = None
+        if existing is not None:
+            print(f"Validated existing artifact; skipping task {spec.task_id}: {transform_path(probing_base, spec)}")
+            return 0
+    elif transform_path(probing_base, spec).exists():
+        print(
+            f"--overwrite set; retraining task {spec.task_id} over "
+            f"{transform_path(probing_base, spec)}"
+        )
 
     scratch_root = args.scratch_root.expanduser().resolve() if args.scratch_root else None
     if scratch_root is not None:
@@ -538,6 +544,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--burnin", type=int, default=15)
     run_parser.add_argument("--patience", type=int, default=15)
     run_parser.add_argument("--sigma", default="0.001")
+    run_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Retrain and republish even if a valid transform already exists.",
+    )
 
     select_parser = subparsers.add_parser("select", help="select the best lambda")
     select_parser.add_argument("--probing-base", type=Path, required=True)

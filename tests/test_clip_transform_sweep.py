@@ -4,8 +4,10 @@ import argparse
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
+import pandas as pd
 
 from scripts import clip_transform_sweep as sweep
 from scripts.run_global_probing_compat import fold_isolated_trainer
@@ -106,6 +108,103 @@ class ClipTransformSweepTests(unittest.TestCase):
             "transform_sha256": sweep.sha256(path),
         }
         sweep.atomic_json(metadata, sweep.result_path(root, spec))
+
+    def make_run_fixture(self, root: Path) -> argparse.Namespace:
+        data_root = root / "things"
+        triplet_root = data_root / "triplets"
+        triplet_root.mkdir(parents=True)
+        (triplet_root / "train_90.npy").touch()
+        (triplet_root / "test_10.npy").touch()
+        features_path = data_root / "features.pkl"
+        features_path.touch()
+        return argparse.Namespace(
+            task_id=0,
+            repo_root=Path(__file__).resolve().parents[1],
+            data_root=data_root,
+            features=features_path,
+            probing_base=root / "published",
+            scratch_root=root / "scratch",
+            device="gpu",
+            batch_size=256,
+            epochs=100,
+            burnin=15,
+            patience=15,
+            sigma="0.001",
+            overwrite=False,
+        )
+
+    def fake_training_run(self, spec: sweep.TaskSpec):
+        """Fabricate the published probing outputs a real subprocess call would leave behind."""
+
+        def run(command, cwd, check):
+            del cwd, check
+            probing_root = Path(command[command.index("--probing_root") + 1])
+            transform_dir = (
+                probing_root
+                / "results"
+                / "custom"
+                / Path(spec.model)
+                / "penultimate"
+                / str(sweep.N_FOLDS)
+                / spec.lambda_label
+                / sweep.OPTIMIZER.lower()
+                / sweep.LEARNING_RATE
+            )
+            transform_dir.mkdir(parents=True)
+            np.savez_compressed(
+                transform_dir / "transform.npz",
+                weights=np.eye(3, dtype=np.float32),
+                mean=np.asarray(0, dtype=np.float32),
+                std=np.asarray(1, dtype=np.float32),
+            )
+            frame = pd.DataFrame(
+                [
+                    {
+                        "model": spec.model,
+                        "module": "penultimate",
+                        "source": "custom",
+                        "reg": spec.regularization,
+                        "optim": sweep.OPTIMIZER.lower(),
+                        "n_folds": sweep.N_FOLDS,
+                        "bias": False,
+                        "lr": float(sweep.LEARNING_RATE),
+                        "lmbda": spec.lmbda,
+                        "cross-entropy": 0.5,
+                        "probing": 0.7,
+                    }
+                ]
+            )
+            frame.to_pickle(probing_root / "results" / "probing_results.pkl")
+
+        return run
+
+    def test_run_task_skips_when_valid_result_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.make_run_fixture(root)
+            spec = sweep.task_spec(args.task_id)
+            self.publish_candidate(args.probing_base, spec, 0.5, 0.7)
+
+            with mock.patch.object(sweep.subprocess, "run") as run:
+                self.assertEqual(sweep.run_task(args), 0)
+                run.assert_not_called()
+
+    def test_overwrite_flag_forces_retrain_over_valid_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.make_run_fixture(root)
+            spec = sweep.task_spec(args.task_id)
+            self.publish_candidate(args.probing_base, spec, 0.5, 0.7)
+            args.overwrite = True
+
+            with mock.patch.object(
+                sweep.subprocess, "run", side_effect=self.fake_training_run(spec)
+            ) as run:
+                self.assertEqual(sweep.run_task(args), 0)
+                run.assert_called_once()
+
+            metadata = sweep.validate_result(args.probing_base, spec)
+            self.assertEqual(metadata["metrics"]["mean_cv_accuracy"], 0.7)
 
     def test_selection_publishes_all_lambdas_and_best_copy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

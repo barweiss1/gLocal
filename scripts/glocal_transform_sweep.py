@@ -782,29 +782,27 @@ def run_task(args: argparse.Namespace) -> int:
     validate_feature_workers(args.feature_workers)
     models = load_models(args.config)
     spec = task_spec(models, args.task_id)
-    prepared = preflight(args, models, spec)
-
-    try:
-        validate_result(
-            prepared.probing_base,
-            spec,
-            args.burnin,
-            args.patience,
-            prepared.input_metadata,
-            prepared.repo_revision,
-            args.feature_workers,
-        )
-    except SweepError as error:
+    existing_transform = transform_path(args.probing_base.expanduser().resolve(), spec)
+    if existing_transform.exists() and not args.overwrite:
+        try:
+            validate_npz(existing_transform)
+        except SweepError as error:
+            raise SweepError(
+                f"Existing transform is invalid and will not be overwritten: {error}"
+            ) from error
         print(
-            f"Existing artifact is not reusable for task {spec.task_id}: {error}",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            f"Validated existing artifact; skipping task {spec.task_id}: "
-            f"{transform_path(prepared.probing_base, spec)}"
+            f"Transform already exists; skipping task {spec.task_id}: "
+            f"{existing_transform}"
         )
         return 0
+    if existing_transform.exists() and args.overwrite:
+        print(
+            f"--overwrite set; retraining task {spec.task_id} over {existing_transform}"
+        )
+
+    # The transform is known absent (or being overwritten) at this point, so
+    # there is no existing artifact left to validate before training.
+    prepared = preflight(args, models, spec)
 
     scratch_root = (
         args.scratch_root.expanduser().resolve() if args.scratch_root else None
@@ -922,6 +920,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--n-objects", type=int, default=1854)
     run_parser.add_argument("--burnin", type=int, default=BURNIN)
     run_parser.add_argument("--patience", type=int, default=PATIENCE)
+    run_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Retrain and republish even if a valid transform already exists.",
+    )
 
     validate_parser = subparsers.add_parser(
         "validate", help="validate every configured transform"

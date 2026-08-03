@@ -137,13 +137,29 @@ Feature extraction and training both use temporary directories. A rerun skips
 only validated canonical artifacts. Failed jobs do not publish partial
 transforms.
 
-Resume validation treats the sweep-wrapper hash and repository revision as
-provenance rather than resume keys, so extending the Cartesian grid or making
-an unrelated commit does not retrain existing parameter combinations. Hashes
-of the relevant entry point and training inputs are checked directly. Training
-hyperparameters, feature dimensions, and artifact checksums must still match.
-If an existing artifact fails validation, the worker prints the exact reason
-before retraining it.
+Before loading THINGS or ImageNet data, each task checks its canonical transform
+path. A finite, dimensionally valid NPZ is skipped immediately, even when its
+historical result JSON or provenance differs. An invalid existing NPZ stops the
+task and is never overwritten. For newly trained transforms, the result JSON
+continues to record the sweep-wrapper hash, repository revision, relevant entry
+point and input hashes, hyperparameters, dimensions, and artifact checksum.
+
+### Forcing a retrain
+
+Set `OVERWRITE=1` to retrain and republish a task even though a structurally
+valid transform already exists at its canonical path, for example to redo a
+run with different hyperparameters that `validate_npz`'s structural checks
+alone cannot detect as stale:
+
+```bash
+OVERWRITE=1 GLOCAL_ARRAY_OVERRIDE=0-0 MAX_PARALLEL=1 \
+  bash scripts/submit_glocal_transforms.sh \
+    scripts/glocal_sweep.clip.json
+```
+
+`--overwrite` only bypasses the skip decision; the freshly trained artifact
+still goes through the same post-training `validate_npz`/`validate_result`
+checks as any other run before it is published.
 
 Validate the configured transform sweep:
 

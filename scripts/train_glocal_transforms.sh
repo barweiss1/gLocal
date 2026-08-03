@@ -88,6 +88,7 @@ fi
 FEATURE_WORKERS="${FEATURE_WORKERS:-2}"
 N_OBJECTS="${N_OBJECTS:-1854}"
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
+OVERWRITE="${OVERWRITE:-0}"
 
 RUN_ARGS=(
   --config "$GLOCAL_SWEEP_CONFIG"
@@ -104,4 +105,7 @@ RUN_ARGS=(
   --burnin "$BURNIN"
   --patience "$PATIENCE"
 )
+if [[ "$OVERWRITE" != "0" ]]; then
+  RUN_ARGS+=(--overwrite)
+fi
 "$PYTHON_BIN" scripts/glocal_transform_sweep.py run "${RUN_ARGS[@]}"

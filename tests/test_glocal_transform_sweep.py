@@ -225,6 +225,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
             n_objects=3,
             burnin=10,
             patience=10,
+            overwrite=False,
         )
 
     def test_run_publishes_and_then_resumes_exact_artifact(self) -> None:
@@ -233,15 +234,6 @@ class GlocalTransformSweepTests(unittest.TestCase):
             args = self.make_run_fixture(root)
             upstream = FakeUpstream()
             with mock.patch.object(sweep, "import_upstream", return_value=upstream):
-                self.assertEqual(sweep.run_task(args), 0)
-                spec = sweep.task_spec(sweep.load_models(args.config), 0)
-                metadata_path = sweep.result_path(args.probing_base, spec)
-                metadata = sweep.read_json(metadata_path)
-                metadata["inputs"]["sha256"]["glocal_transform_sweep"] = (
-                    "historical-wrapper-checksum"
-                )
-                metadata["repo_revision"] = "historical-repository-revision"
-                sweep.atomic_json(metadata, metadata_path)
                 self.assertEqual(sweep.run_task(args), 0)
 
             self.assertEqual(len(upstream.run_calls), 1)
@@ -273,6 +265,79 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 "precomputed_imagenet_features_hdf5",
             )
             self.assertEqual(metadata["metrics"]["test_accuracy"], 0.61)
+
+            # Historical sweep-wrapper hash and repository revision are
+            # provenance, not resume keys: validate_result must tolerate them
+            # drifting from what was originally recorded.
+            metadata_path = sweep.result_path(args.probing_base, spec)
+            metadata["inputs"]["sha256"]["glocal_transform_sweep"] = (
+                "historical-wrapper-checksum"
+            )
+            metadata["repo_revision"] = "historical-repository-revision"
+            sweep.atomic_json(metadata, metadata_path)
+            sweep.validate_result(args.probing_base, spec)
+
+    def test_overwrite_flag_retrains_over_valid_existing_transform(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.make_run_fixture(root)
+            spec = sweep.task_spec(sweep.load_models(args.config), 0)
+            destination = sweep.transform_path(args.probing_base, spec)
+            sweep.save_npz(
+                destination,
+                np.eye(2, dtype=np.float32),
+                np.float32(0),
+                np.float32(1),
+            )
+
+            args.overwrite = True
+            upstream = FakeUpstream()
+            with mock.patch.object(sweep, "import_upstream", return_value=upstream):
+                self.assertEqual(sweep.run_task(args), 0)
+                self.assertEqual(len(upstream.run_calls), 1)
+
+            metadata = sweep.validate_result(args.probing_base, spec)
+            self.assertEqual(metadata["metrics"]["test_accuracy"], 0.61)
+
+    def test_existing_transform_skips_before_loading_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.make_run_fixture(root)
+            spec = sweep.task_spec(sweep.load_models(args.config), 0)
+            destination = sweep.transform_path(args.probing_base, spec)
+            sweep.save_npz(
+                destination,
+                np.eye(2, dtype=np.float32),
+                np.float32(0),
+                np.float32(1),
+            )
+            args.features.unlink()
+
+            with mock.patch.object(sweep, "import_upstream") as importer:
+                self.assertEqual(sweep.run_task(args), 0)
+                importer.assert_not_called()
+
+    def test_invalid_existing_transform_is_not_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = self.make_run_fixture(root)
+            spec = sweep.task_spec(sweep.load_models(args.config), 0)
+            destination = sweep.transform_path(args.probing_base, spec)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                destination,
+                weights=np.asarray([[np.nan]], dtype=np.float32),
+                mean=np.float32(0),
+                std=np.float32(1),
+            )
+
+            with mock.patch.object(sweep, "import_upstream") as importer:
+                with self.assertRaisesRegex(
+                    sweep.SweepError,
+                    "invalid and will not be overwritten",
+                ):
+                    sweep.run_task(args)
+                importer.assert_not_called()
 
     def test_corruption_and_metadata_mismatch_invalidate_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -98,17 +98,23 @@ if (( PATIENCE < BURNIN )); then
 fi
 
 SCRATCH_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
+OVERWRITE="${OVERWRITE:-0}"
 
-"$PYTHON_BIN" scripts/clip_transform_sweep.py run \
-  --task-id "$TASK_ID" \
-  --repo-root "$REPO_ROOT" \
-  --data-root "$THINGS_DATA_ROOT" \
-  --features "$THINGS_FEATURES" \
-  --probing-base "$PROBING_BASE" \
-  --scratch-root "$SCRATCH_ROOT" \
-  --device gpu \
-  --batch-size "$BATCH_SIZE" \
-  --epochs "$EPOCHS" \
-  --burnin "$BURNIN" \
-  --patience "$PATIENCE" \
+RUN_ARGS=(
+  --task-id "$TASK_ID"
+  --repo-root "$REPO_ROOT"
+  --data-root "$THINGS_DATA_ROOT"
+  --features "$THINGS_FEATURES"
+  --probing-base "$PROBING_BASE"
+  --scratch-root "$SCRATCH_ROOT"
+  --device gpu
+  --batch-size "$BATCH_SIZE"
+  --epochs "$EPOCHS"
+  --burnin "$BURNIN"
+  --patience "$PATIENCE"
   --sigma "$SIGMA"
+)
+if [[ "$OVERWRITE" != "0" ]]; then
+  RUN_ARGS+=(--overwrite)
+fi
+"$PYTHON_BIN" scripts/clip_transform_sweep.py run "${RUN_ARGS[@]}"

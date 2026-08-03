@@ -94,6 +94,11 @@ The training script defaults `THINGS_FEATURES` to `$THINGS_DATA_ROOT/features.pk
 You can set it explicitly when using an existing feature dictionary. It must
 contain all four models under `features["custom"][model]["penultimate"]`.
 
+By default, a task whose validated artifact already exists is skipped. Set
+`OVERWRITE=1` in the job's `--export` list to force that task to retrain and
+republish even though a valid transform is already present, for example
+`--export="ALL,PYTHON_BIN=$CONDA_PREFIX/bin/python,OVERWRITE=1"`.
+
 Training defaults to `BURNIN=15` and `PATIENCE=15`, and the wrappers require
 patience to be greater than or equal to burn-in. In Lightning 1.8, an
 EarlyStopping callback can set `trainer.should_stop` before `min_epochs` has been
@@ -232,13 +237,13 @@ CIFAR catalogs first, then submits one CLIP-RN50 job for all datasets and three
 OpenCLIP jobs (one per dataset):
 
 ```bash
-bash scripts/submit_clip_representations_4way.sh
+bash scripts/submit_clip_representations.sh
 ```
 
 Optional `sbatch` flags are forwarded to all four jobs:
 
 ```bash
-bash scripts/submit_clip_representations_4way.sh \
+bash scripts/submit_clip_representations.sh \
   --partition=high \
   --time=2-00:00:00
 ```
@@ -259,6 +264,15 @@ sample IDs across every model and transform:
 
 Each NPZ contains `features`, `labels`, `sample_ids`, `sample_indices`, model/layer
 metadata, and `performance_json`. Performance initially has status `not-attached`.
+
+### Resumability
+
+`collect_representations.py extract` is resumable per output batch, with no
+separate overwrite flag needed. Each batch is reused only if its `sample_ids`
+and transform identity/hash match what the current configuration expects;
+otherwise it is silently regenerated. A transform hash change (for example, a
+retrained gLocal transform) therefore invalidates and regenerates only the
+batches that depended on it, while everything else is left untouched.
 
 ## Add downstream results
 

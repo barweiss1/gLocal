@@ -11,3 +11,5 @@ resources
 *.ipynb_checkpoints/
 *.html
 *.ipynb
+CLAUDE.md
+AGENTS.md
