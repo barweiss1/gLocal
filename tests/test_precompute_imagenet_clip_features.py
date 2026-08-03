@@ -74,6 +74,8 @@ class PrecomputeImageNetClipFeatureTests(unittest.TestCase):
                 return_value=upstream,
             ):
                 self.assertEqual(precompute.run(args), 0)
+                args.batch_size = 64
+                args.workers = 1
                 self.assertEqual(precompute.run(args), 0)
 
             self.assertEqual(len(upstream.calls), 1)
@@ -86,8 +88,8 @@ class PrecomputeImageNetClipFeatureTests(unittest.TestCase):
                 args.imagenet_root.resolve(),
                 args.output_root.resolve(),
                 model,
-                args.batch_size,
-                args.workers,
+                64,
+                1,
                 args.train_count,
                 args.val_count,
             )

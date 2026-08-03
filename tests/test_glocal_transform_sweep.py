@@ -234,6 +234,13 @@ class GlocalTransformSweepTests(unittest.TestCase):
             upstream = FakeUpstream()
             with mock.patch.object(sweep, "import_upstream", return_value=upstream):
                 self.assertEqual(sweep.run_task(args), 0)
+                spec = sweep.task_spec(sweep.load_models(args.config), 0)
+                metadata_path = sweep.result_path(args.probing_base, spec)
+                metadata = sweep.read_json(metadata_path)
+                metadata["inputs"]["sha256"]["glocal_transform_sweep"] = (
+                    "historical-wrapper-checksum"
+                )
+                sweep.atomic_json(metadata, metadata_path)
                 self.assertEqual(sweep.run_task(args), 0)
 
             self.assertEqual(len(upstream.run_calls), 1)

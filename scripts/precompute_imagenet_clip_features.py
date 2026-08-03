@@ -132,6 +132,15 @@ def validate_model(
     val_count: int,
     verify_checksums: bool = True,
 ) -> dict[str, Any]:
+    """Validate whether a published cache is reusable by the current model.
+
+    Extraction batch size, worker count, package versions, paths, and repository
+    revision remain recorded as provenance, but do not change the meaning of an
+    already published feature matrix. Compatibility therefore depends on the
+    model/preprocessing identity, the published extractor, and the recorded file
+    metadata and checksums.
+    """
+    del batch_size, workers
     root = model_root(output_root, model)
     train_file = hdf5_path(root, "train")
     val_file = hdf5_path(root, "val")
@@ -142,26 +151,64 @@ def validate_model(
             f"Train/validation feature dimensions differ for {model.name}"
         )
     manifest = sweep.read_json(manifest_path(output_root, model))
-    recorded_train = manifest.get("features", {}).get("train", {}).get("sha256")
-    recorded_val = manifest.get("features", {}).get("val", {}).get("sha256")
-    if not isinstance(recorded_train, str) or not isinstance(recorded_val, str):
-        raise sweep.SweepError(f"Feature checksums are missing for {model.name}")
-    train_sha = sweep.sha256(train_file) if verify_checksums else recorded_train
-    val_sha = sweep.sha256(val_file) if verify_checksums else recorded_val
-    expected = expected_manifest(
-        config,
-        repo_root,
-        imagenet_root,
-        model,
-        batch_size,
-        workers,
-        train_info,
-        val_info,
-        train_sha,
-        val_sha,
-    )
-    if manifest != expected:
-        raise sweep.SweepError(f"ImageNet feature manifest mismatch for {model.name}")
+    if manifest.get("schema_version") != SCHEMA_VERSION:
+        raise sweep.SweepError(f"Feature schema mismatch for {model.name}")
+    configuration = manifest.get("configuration")
+    expected_identity = {
+        "model": model.name,
+        "model_slug": model.slug,
+        "source": model.source,
+        "module": model.module,
+        "module_name": model.module_name,
+        "resize_dim": 256,
+        "crop_dim": 224,
+        "format": "hdf5",
+    }
+    if not isinstance(configuration, dict):
+        raise sweep.SweepError(f"Feature configuration is missing for {model.name}")
+    for key, expected_value in expected_identity.items():
+        if configuration.get(key) != expected_value:
+            raise sweep.SweepError(
+                f"ImageNet feature {key} mismatch for {model.name}: "
+                f"{configuration.get(key)!r} != {expected_value!r}"
+            )
+
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, dict):
+        raise sweep.SweepError(f"Feature input metadata is missing for {model.name}")
+    entrypoint = repo_root / "main_imagenet_feature_extraction.py"
+    if inputs.get("published_entrypoint_sha256") != sweep.sha256(entrypoint):
+        raise sweep.SweepError(
+            f"Published ImageNet extractor mismatch for {model.name}"
+        )
+
+    recorded_features = manifest.get("features")
+    if not isinstance(recorded_features, dict):
+        raise sweep.SweepError(f"Feature metadata is missing for {model.name}")
+    for split, path, actual_info in (
+        ("train", train_file, train_info),
+        ("val", val_file, val_info),
+    ):
+        recorded = recorded_features.get(split)
+        if not isinstance(recorded, dict):
+            raise sweep.SweepError(
+                f"{split} feature metadata is missing for {model.name}"
+            )
+        for key, actual_value in actual_info.items():
+            if recorded.get(key) != actual_value:
+                raise sweep.SweepError(
+                    f"ImageNet {split} feature {key} mismatch for {model.name}: "
+                    f"{recorded.get(key)!r} != {actual_value!r}"
+                )
+        recorded_sha = recorded.get("sha256")
+        if not isinstance(recorded_sha, str):
+            raise sweep.SweepError(
+                f"{split} feature checksum is missing for {model.name}"
+            )
+        if verify_checksums and sweep.sha256(path) != recorded_sha:
+            raise sweep.SweepError(
+                f"ImageNet {split} feature checksum mismatch for {model.name}"
+            )
     return manifest
 
 

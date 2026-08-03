@@ -9,6 +9,7 @@ inputs before heavy imports, and publishes only successful transforms.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -359,8 +360,14 @@ def validate_result(
         feature_workers,
     ):
         raise SweepError(f"Training configuration mismatch in {metadata_path}")
-    if expected_inputs is not None and metadata.get("inputs") != dict(expected_inputs):
-        raise SweepError(f"Training input mismatch in {metadata_path}")
+    if expected_inputs is not None:
+        recorded_inputs = copy.deepcopy(metadata.get("inputs"))
+        comparable_inputs = copy.deepcopy(dict(expected_inputs))
+        for inputs in (recorded_inputs, comparable_inputs):
+            if isinstance(inputs, dict) and isinstance(inputs.get("sha256"), dict):
+                inputs["sha256"].pop("glocal_transform_sweep", None)
+        if recorded_inputs != comparable_inputs:
+            raise SweepError(f"Training input mismatch in {metadata_path}")
     if (
         expected_revision is not None
         and metadata.get("repo_revision") != expected_revision

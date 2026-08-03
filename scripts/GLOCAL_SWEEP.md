@@ -82,6 +82,12 @@ Validate completed caches:
   --output-root "$IMAGENET_FEATURES_BASE"
 ```
 
+Cache validation checks model and preprocessing identity, the published
+extractor hash, HDF5 structure, sample counts, dimensions, and file checksums.
+Extraction batch size, worker count, package versions, paths, and repository
+revision remain in the manifest as provenance but do not invalidate an already
+published compatible cache.
+
 ## 2. Run the gLocal sweep
 
 After feature extraction succeeds, submit a pilot for task 0. In the example
@@ -130,6 +136,11 @@ PROBING_BASE/selected/glocal/<model>/param_sweep/
 Feature extraction and training both use temporary directories. A rerun skips
 only validated canonical artifacts. Failed jobs do not publish partial
 transforms.
+
+Resume validation ignores only the recorded hash of this sweep wrapper, so
+extending the Cartesian grid does not retrain existing parameter combinations.
+Training inputs, hyperparameters, feature dimensions, and artifact checksums
+must still match.
 
 Validate the configured transform sweep:
 
