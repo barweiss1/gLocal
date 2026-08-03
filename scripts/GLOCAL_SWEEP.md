@@ -137,10 +137,13 @@ Feature extraction and training both use temporary directories. A rerun skips
 only validated canonical artifacts. Failed jobs do not publish partial
 transforms.
 
-Resume validation ignores only the recorded hash of this sweep wrapper, so
-extending the Cartesian grid does not retrain existing parameter combinations.
-Training inputs, hyperparameters, feature dimensions, and artifact checksums
-must still match.
+Resume validation treats the sweep-wrapper hash and repository revision as
+provenance rather than resume keys, so extending the Cartesian grid or making
+an unrelated commit does not retrain existing parameter combinations. Hashes
+of the relevant entry point and training inputs are checked directly. Training
+hyperparameters, feature dimensions, and artifact checksums must still match.
+If an existing artifact fails validation, the worker prints the exact reason
+before retraining it.
 
 Validate the configured transform sweep:
 

@@ -240,6 +240,7 @@ class GlocalTransformSweepTests(unittest.TestCase):
                 metadata["inputs"]["sha256"]["glocal_transform_sweep"] = (
                     "historical-wrapper-checksum"
                 )
+                metadata["repo_revision"] = "historical-repository-revision"
                 sweep.atomic_json(metadata, metadata_path)
                 self.assertEqual(sweep.run_task(args), 0)
 

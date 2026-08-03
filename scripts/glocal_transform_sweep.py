@@ -349,6 +349,10 @@ def validate_result(
     expected_revision: Optional[str] = None,
     feature_workers: int = FEATURE_WORKERS,
 ) -> Dict[str, Any]:
+    # The repository revision is retained in result metadata as provenance. It
+    # is intentionally not a resume key because unrelated commits do not change
+    # a transform; relevant inputs and entry points are checked by their hashes.
+    del expected_revision
     metadata_path = result_path(probing_base, spec)
     metadata = read_json(metadata_path)
     if metadata.get("schema_version") != SCHEMA_VERSION:
@@ -368,12 +372,6 @@ def validate_result(
                 inputs["sha256"].pop("glocal_transform_sweep", None)
         if recorded_inputs != comparable_inputs:
             raise SweepError(f"Training input mismatch in {metadata_path}")
-    if (
-        expected_revision is not None
-        and metadata.get("repo_revision") != expected_revision
-    ):
-        raise SweepError(f"Repository revision mismatch in {metadata_path}")
-
     npz = validate_npz(transform_path(probing_base, spec))
     if metadata.get("transform_sha256") != npz["sha256"]:
         raise SweepError(
@@ -796,8 +794,11 @@ def run_task(args: argparse.Namespace) -> int:
             prepared.repo_revision,
             args.feature_workers,
         )
-    except SweepError:
-        pass
+    except SweepError as error:
+        print(
+            f"Existing artifact is not reusable for task {spec.task_id}: {error}",
+            file=sys.stderr,
+        )
     else:
         print(
             f"Validated existing artifact; skipping task {spec.task_id}: "
